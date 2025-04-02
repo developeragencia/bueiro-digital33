@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { Utm } from '../types/supabase';
 import { useLoading } from './useLoading';
 import { useNotification } from './useNotification';
+import { utmService } from '../services/utm';
 
 export function useUtm(campaignId?: string) {
   const [utms, setUtms] = useState<Utm[]>([]);
@@ -11,18 +12,7 @@ export function useUtm(campaignId?: string) {
 
   const [isLoading, setIsLoading] = useState(true);
 
-  const [loadUtms, isLoadingUtms] = useLoading(loadUtms);
-  const [createUtm, isCreating] = useLoading(createUtm);
-  const [updateUtm, isUpdating] = useLoading(updateUtm);
-  const [deleteUtm, isDeleting] = useLoading(deleteUtm);
-
-  useEffect(() => {
-    if (campaignId) {
-      loadUtms();
-    }
-  }, [campaignId]);
-
-  const loadUtms = async () => {
+  const loadUtmsCallback = useCallback(async () => {
     try {
       setIsLoading(true);
       const query = supabase
@@ -46,30 +36,24 @@ export function useUtm(campaignId?: string) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [campaignId]);
 
-  const fetchUtm = async (id: string) => {
-    const result = await loadUtms();
-    setSelectedUtm(result.find(utm => utm.id === id) || null);
-    return result;
-  };
-
-  const create = async (utm: Omit<Utm, 'id' | 'created_at' | 'updated_at'>) => {
+  const createUtmCallback = useCallback(async (data: Omit<Utm, 'id' | 'created_at' | 'updated_at'>) => {
     try {
-      const result = await createUtm(utm);
-      setUtms(prev => [...prev, result]);
+      const result = await utmService.createUtm(data);
+      await loadUtmsCallback();
       notification.success('UTM criado com sucesso!');
       return result;
     } catch (error) {
       console.error('Error creating UTM:', error);
       throw error;
     }
-  };
+  }, [loadUtmsCallback, notification]);
 
-  const update = async (id: string, utm: Partial<Utm>) => {
+  const updateUtmCallback = useCallback(async (id: string, data: Partial<Utm>) => {
     try {
-      const result = await updateUtm(id, utm);
-      setUtms(prev => prev.map(u => u.id === id ? result : u));
+      const result = await utmService.updateUtm(id, data);
+      await loadUtmsCallback();
       setSelectedUtm(result);
       notification.success('UTM atualizado com sucesso!');
       return result;
@@ -77,18 +61,28 @@ export function useUtm(campaignId?: string) {
       console.error('Error updating UTM:', error);
       throw error;
     }
-  };
+  }, [loadUtmsCallback, notification]);
 
-  const remove = async (id: string) => {
+  const deleteUtmCallback = useCallback(async (id: string) => {
     try {
-      await deleteUtm(id);
-      setUtms(prev => prev.filter(u => u.id !== id));
+      const result = await utmService.deleteUtm(id);
+      await loadUtmsCallback();
       setSelectedUtm(null);
       notification.success('UTM excluído com sucesso!');
+      return result;
     } catch (error) {
       console.error('Error deleting UTM:', error);
       throw error;
     }
+  }, [loadUtmsCallback, notification]);
+
+  const [loadUtms, isLoadingUtms] = useLoading(loadUtmsCallback);
+  const [createUtm, isCreating] = useLoading(createUtmCallback);
+  const [updateUtm, isUpdating] = useLoading(updateUtmCallback);
+  const [deleteUtm, isDeleting] = useLoading(deleteUtmCallback);
+
+  const selectUtm = (id: string) => {
+    setSelectedUtm(utms.find(utm => utm.id === id) || null);
   };
 
   const generateUrl = (utm: Utm) => {
@@ -110,10 +104,11 @@ export function useUtm(campaignId?: string) {
     isCreating,
     isUpdating,
     isDeleting,
-    fetchUtm,
-    create,
-    update,
-    remove,
+    loadUtms,
+    createUtm,
+    updateUtm,
+    deleteUtm,
+    selectUtm,
     generateUrl,
   };
 } 

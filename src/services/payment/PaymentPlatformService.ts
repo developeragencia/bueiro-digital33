@@ -1,8 +1,16 @@
 import { supabase } from '../../lib/supabase';
 import { PaymentPlatform } from '../../types/supabase';
 import { AvailablePlatform, PlatformConfig, PlatformIntegration, PlatformSettings, PlatformStatus } from '../../types/payment';
+import { transactionService } from './TransactionService';
 
-class PaymentPlatformService {
+export class PaymentPlatformService {
+  protected platformId: string;
+  protected transactionService = transactionService;
+
+  constructor() {
+    this.platformId = '';
+  }
+
   async create(platform: Omit<PaymentPlatform, 'id' | 'created_at' | 'updated_at'>) {
     try {
       const { data, error } = await supabase
@@ -219,26 +227,28 @@ class PaymentPlatformService {
   getDefaultPlatformSettings(): PlatformSettings {
     return {
       features: {
-        webhooks: true,
-        refunds: true,
-        subscriptions: true,
-        splitPayments: false,
-        customerManagement: true,
-        productCatalog: true,
-        orderManagement: true,
-        reporting: true
+        webhooks: false,
+        refunds: false,
+        subscriptions: false,
+        split_payments: false,
       },
-      supportedCurrencies: ['BRL', 'USD'],
-      supportedPaymentMethods: ['credit_card', 'pix', 'boleto'],
-      supportedCountries: ['BR', 'US'],
-      testMode: false
+      limits: {
+        min_amount: 0,
+        max_amount: 0,
+        daily_transactions: 0,
+        monthly_transactions: 0,
+      },
+      currencies: ['BRL'],
+      payment_methods: ['credit_card'],
+      countries: ['BR'],
+      test_mode: true
     };
   }
 
   getDefaultPlatformStatus(): PlatformStatus {
     return {
-      isActive: true,
-      lastChecked: new Date(),
+      is_active: true,
+      last_checked: new Date().toISOString(),
       uptime: 100,
       latency: 0,
       errors: 0
@@ -260,19 +270,21 @@ class PaymentPlatformService {
       status
     };
 
-    await this.create({
+    const platformToCreate: Omit<PaymentPlatform, 'id' | 'created_at' | 'updated_at'> = {
       user_id: userId,
       platform_id: platform.id,
       name: platform.name,
-      description: platform.description,
-      api_key: config.apiKey,
-      secret_key: config.secretKey,
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      webhook_url: config.webhookUrl,
-      webhook_secret: config.webhookSecret,
-      is_active: true
-    });
+      api_key: config.apiKey || '',
+      secret_key: config.secretKey || '',
+      client_id: config.clientId || null,
+      client_secret: config.clientSecret || null,
+      webhook_url: config.webhookUrl || null,
+      webhook_secret: config.webhookSecret || null,
+      settings: this.getDefaultPlatformSettings(),
+      status: this.getDefaultPlatformStatus()
+    };
+
+    await this.create(platformToCreate);
 
     return integration;
   }

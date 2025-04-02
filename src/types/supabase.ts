@@ -1,3 +1,5 @@
+import { PlatformSettings, PlatformStatus } from './payment';
+
 export type Json =
   | string
   | number
@@ -252,20 +254,19 @@ export interface Database {
 
 export interface PaymentPlatform {
   id: string;
-  created_at: string;
-  updated_at: string;
-  name: string;
-  platform: string;
-  client_id: string | null;
-  client_secret: string | null;
-  webhook_secret: string | null;
-  webhook_url: string | null;
-  is_active: boolean;
   user_id: string;
   platform_id: string;
+  name: string;
   api_key: string;
   secret_key: string;
-  description?: string;
+  client_id: string | null;
+  client_secret: string | null;
+  webhook_url: string | null;
+  webhook_secret: string | null;
+  settings: PlatformSettings;
+  status: PlatformStatus;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Transaction {

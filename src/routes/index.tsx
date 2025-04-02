@@ -8,6 +8,14 @@ import { UtmForm } from '../components/utm/UtmForm';
 import { AnalyticsDashboard } from '../components/analytics/AnalyticsDashboard';
 import { PaymentPlatformSettings } from '../components/payment/PaymentPlatformSettings';
 import { useAuth } from '../hooks/useAuth';
+import Login from '../pages/Login';
+import Register from '../pages/Register';
+import Dashboard from '../pages/Dashboard';
+import Profile from '../pages/Profile';
+import Settings from '../pages/Settings';
+import NotFound from '../pages/NotFound';
+import DashboardLayout from '../layouts/DashboardLayout';
+import MainLayout from '../layouts/MainLayout';
 
 interface PrivateRouteProps {
   children: React.ReactNode;
@@ -31,92 +39,34 @@ function PrivateRoute({ children }: PrivateRouteProps) {
   return <Layout>{children}</Layout>;
 }
 
-export function AppRoutes() {
+export default function AppRoutes() {
+  const { user, isInitialized } = useAuth();
+
+  if (!isInitialized) {
+    return <div>Loading...</div>;
+  }
+
   return (
     <Routes>
-      <Route path="/login" element={<AuthForm mode="login" />} />
-      <Route path="/register" element={<AuthForm mode="register" />} />
-
-      <Route
-        path="/"
-        element={
-          <PrivateRoute>
-            <CampaignList />
-          </PrivateRoute>
-        }
-      />
-
-      <Route
-        path="/campaigns"
-        element={
-          <PrivateRoute>
-            <CampaignList />
-          </PrivateRoute>
-        }
-      />
-
-      <Route
-        path="/campaigns/new"
-        element={
-          <PrivateRoute>
-            <CampaignForm />
-          </PrivateRoute>
-        }
-      />
-
-      <Route
-        path="/campaigns/:id"
-        element={
-          <PrivateRoute>
-            <CampaignForm />
-          </PrivateRoute>
-        }
-      />
-
-      <Route
-        path="/utms"
-        element={
-          <PrivateRoute>
-            <UtmList />
-          </PrivateRoute>
-        }
-      />
-
-      <Route
-        path="/utms/new"
-        element={
-          <PrivateRoute>
-            <UtmForm />
-          </PrivateRoute>
-        }
-      />
-
-      <Route
-        path="/utms/:id"
-        element={
-          <PrivateRoute>
-            <UtmForm />
-          </PrivateRoute>
-        }
-      />
-
-      <Route
-        path="/analytics"
-        element={
-          <PrivateRoute>
-            <AnalyticsDashboard />
-          </PrivateRoute>
-        }
-      />
-
-      <Route
-        path="/payments"
-        element={
-          <PrivateRoute>
-            <PaymentPlatformSettings />
-          </PrivateRoute>
-        }
-      />
+      {user ? (
+        <>
+          <Route element={<DashboardLayout />}>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/profile" element={<Profile />} />
+            <Route path="/settings" element={<Settings />} />
+          </Route>
+        </>
+      ) : (
+        <>
+          <Route element={<MainLayout />}>
+            <Route path="/" element={<Navigate to="/login" replace />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+          </Route>
+        </>
+      )}
+      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 } 

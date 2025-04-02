@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UtmService } from '../../services/utm';
+import { utmService } from '../../services/utm';
 import { Utm } from '../../types/supabase';
 import toast from 'react-hot-toast';
 
@@ -15,7 +15,7 @@ export function UtmList() {
 
   const loadUtms = async () => {
     try {
-      const data = await UtmService.getUtms();
+      const data = await utmService.getUtms();
       setUtms(data);
     } catch (error) {
       toast.error('Erro ao carregar UTMs');
@@ -31,7 +31,7 @@ export function UtmList() {
     }
 
     try {
-      await UtmService.deleteUtm(id);
+      await utmService.deleteUtm(id);
       toast.success('UTM excluído com sucesso!');
       loadUtms();
     } catch (error) {

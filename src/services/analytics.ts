@@ -1,6 +1,21 @@
 import { supabase } from '../config/supabase';
 import type { Analytics } from '../config/supabase';
 
+interface AnalyticsData {
+  clicks: number;
+  conversions: number;
+  revenue: number;
+  date: string;
+}
+
+interface AnalyticsTotals {
+  clicks: number;
+  conversions: number;
+  revenue: number;
+  conversion_rate: number;
+  average_order_value: number;
+}
+
 export const analyticsService = {
   async trackClick(campaignId: string) {
     const today = new Date().toISOString().split('T')[0];
@@ -191,4 +206,30 @@ export const analyticsService = {
       ),
     };
   },
+
+  calculateTotals(data: AnalyticsData[]): AnalyticsTotals {
+    const totals = data.reduce((acc, curr) => ({
+      clicks: acc.clicks + curr.clicks,
+      conversions: acc.conversions + curr.conversions,
+      revenue: acc.revenue + curr.revenue,
+    }), {
+      clicks: 0,
+      conversions: 0,
+      revenue: 0
+    });
+
+    const conversionRate = totals.clicks > 0
+      ? (totals.conversions / totals.clicks) * 100
+      : 0;
+
+    const averageOrderValue = totals.conversions > 0
+      ? totals.revenue / totals.conversions
+      : 0;
+
+    return {
+      ...totals,
+      conversion_rate: conversionRate,
+      average_order_value: averageOrderValue
+    };
+  }
 }; 

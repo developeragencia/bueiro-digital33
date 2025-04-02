@@ -1,2 +1,6 @@
 export * from './supabase';
-export * from './payment'; 
+export {
+  PlatformSettings,
+  PlatformStatus,
+  Transaction as PaymentTransaction
+} from './payment'; 

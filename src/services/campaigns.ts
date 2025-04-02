@@ -1,37 +1,69 @@
-import { supabase } from '../config/supabase';
-import type { Campaign } from '../config/supabase';
+import { supabase } from '../lib/supabase';
+import { Campaign } from '../types/supabase';
 
 export const campaignService = {
-  async create(campaign: Omit<Campaign, 'id' | 'created_at' | 'updated_at'>) {
-    const { data, error } = await supabase
-      .from('campaigns')
-      .insert([campaign])
-      .select()
-      .single();
+  async getCampaigns() {
+    try {
+      const { data, error } = await supabase
+        .from('campaigns')
+        .select('*');
 
-    if (error) throw error;
-    return data;
+      if (error) throw error;
+
+      return data;
+    } catch (error) {
+      console.error('Error getting campaigns:', error);
+      throw error;
+    }
+  },
+
+  async create(campaign: Omit<Campaign, 'id' | 'created_at' | 'updated_at'>) {
+    try {
+      const { data, error } = await supabase
+        .from('campaigns')
+        .insert(campaign)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return data;
+    } catch (error) {
+      console.error('Error creating campaign:', error);
+      throw error;
+    }
   },
 
   async update(id: string, campaign: Partial<Campaign>) {
-    const { data, error } = await supabase
-      .from('campaigns')
-      .update(campaign)
-      .eq('id', id)
-      .select()
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('campaigns')
+        .update(campaign)
+        .eq('id', id)
+        .select()
+        .single();
 
-    if (error) throw error;
-    return data;
+      if (error) throw error;
+
+      return data;
+    } catch (error) {
+      console.error('Error updating campaign:', error);
+      throw error;
+    }
   },
 
   async delete(id: string) {
-    const { error } = await supabase
-      .from('campaigns')
-      .delete()
-      .eq('id', id);
+    try {
+      const { error } = await supabase
+        .from('campaigns')
+        .delete()
+        .eq('id', id);
 
-    if (error) throw error;
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error deleting campaign:', error);
+      throw error;
+    }
   },
 
   async getById(id: string) {

@@ -1,23 +1,24 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
-interface AuthUser {
+export interface AuthUser {
   id: string;
   email: string;
-  name: string | null;
+  name: string;
+  role: 'admin' | 'user';
   created_at: string;
   updated_at: string;
 }
 
-interface AuthContextType {
+export interface AuthContextType {
   user: AuthUser | null;
   isInitialized: boolean;
   isSigningIn: boolean;
   isSigningUp: boolean;
   isSigningOut: boolean;
   isUpdating: boolean;
-  login: (email: string, password: string) => Promise<any>;
-  register: (email: string, password: string, name: string) => Promise<any>;
+  login: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, name: string) => Promise<void>;
   signOut: () => Promise<void>;
   updateProfile: (data: Partial<AuthUser>) => Promise<void>;
 }

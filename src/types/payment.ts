@@ -42,27 +42,22 @@ export interface PaymentPlatformStats {
 
 export interface Transaction {
   id: string;
-  platformId: string;
-  orderId: string;
+  user_id: string;
+  platform_id: string;
+  order_id: string;
+  status: string;
   amount: number;
   currency: string;
-  status: 'pending' | 'completed' | 'failed' | 'refunded' | 'chargeback';
+  payment_method: string;
   customer: {
     name: string;
     email: string;
     phone?: string;
     document?: string;
   };
-  product: {
-    id: string;
-    name: string;
-    price: number;
-    quantity: number;
-  };
-  paymentMethod: string;
-  createdAt: Date;
-  updatedAt: Date;
-  metadata?: Record<string, any>;
+  metadata: any;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AvailablePlatform {
@@ -114,12 +109,22 @@ export interface PlatformLimits {
 }
 
 export interface PlatformSettings {
-  features: PlatformFeatures;
-  limits?: PlatformLimits;
-  supportedCurrencies: string[];
-  supportedPaymentMethods: string[];
-  supportedCountries: string[];
-  testMode: boolean;
+  features: {
+    webhooks: boolean;
+    refunds: boolean;
+    subscriptions: boolean;
+    split_payments: boolean;
+  };
+  limits: {
+    min_amount: number;
+    max_amount: number;
+    daily_transactions: number;
+    monthly_transactions: number;
+  };
+  currencies: string[];
+  payment_methods: string[];
+  countries: string[];
+  test_mode: boolean;
 }
 
 export interface PlatformMetrics {
@@ -132,8 +137,8 @@ export interface PlatformMetrics {
 }
 
 export interface PlatformStatus {
-  isActive: boolean;
-  lastChecked: Date;
+  is_active: boolean;
+  last_checked: string;
   uptime: number;
   latency: number;
   errors: number;

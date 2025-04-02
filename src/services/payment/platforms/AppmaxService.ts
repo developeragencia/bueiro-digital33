@@ -134,4 +134,24 @@ export class AppmaxService extends PaymentPlatformService {
       throw error;
     }
   }
+
+  protected async saveTransaction(data: any) {
+    const transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'> = {
+      platform_id: this.platformId,
+      order_id: data.order_id,
+      status: data.status,
+      amount: data.amount,
+      currency: data.currency,
+      payment_method: data.payment_method,
+      customer: {
+        name: data.customer.name,
+        email: data.customer.email,
+        phone: data.customer.phone,
+        document: data.customer.document
+      },
+      metadata: data
+    };
+
+    return await this.transactionService.create(transaction);
+  }
 } 

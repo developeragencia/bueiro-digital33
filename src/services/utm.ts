@@ -1,37 +1,69 @@
-import { supabase } from '../config/supabase';
-import type { UTM } from '../config/supabase';
+import { supabase } from '../lib/supabase';
+import { Utm } from '../types/supabase';
 
 export const utmService = {
-  async create(utm: Omit<UTM, 'id' | 'created_at' | 'updated_at'>) {
-    const { data, error } = await supabase
-      .from('utms')
-      .insert([utm])
-      .select()
-      .single();
+  async getUtms() {
+    try {
+      const { data, error } = await supabase
+        .from('utms')
+        .select('*, campaigns(*)');
 
-    if (error) throw error;
-    return data;
+      if (error) throw error;
+
+      return data;
+    } catch (error) {
+      console.error('Error getting UTMs:', error);
+      throw error;
+    }
   },
 
-  async update(id: string, utm: Partial<UTM>) {
-    const { data, error } = await supabase
-      .from('utms')
-      .update(utm)
-      .eq('id', id)
-      .select()
-      .single();
+  async create(utm: Omit<Utm, 'id' | 'created_at' | 'updated_at'>) {
+    try {
+      const { data, error } = await supabase
+        .from('utms')
+        .insert(utm)
+        .select()
+        .single();
 
-    if (error) throw error;
-    return data;
+      if (error) throw error;
+
+      return data;
+    } catch (error) {
+      console.error('Error creating UTM:', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, utm: Partial<Utm>) {
+    try {
+      const { data, error } = await supabase
+        .from('utms')
+        .update(utm)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return data;
+    } catch (error) {
+      console.error('Error updating UTM:', error);
+      throw error;
+    }
   },
 
   async delete(id: string) {
-    const { error } = await supabase
-      .from('utms')
-      .delete()
-      .eq('id', id);
+    try {
+      const { error } = await supabase
+        .from('utms')
+        .delete()
+        .eq('id', id);
 
-    if (error) throw error;
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error deleting UTM:', error);
+      throw error;
+    }
   },
 
   async getByCampaignId(campaignId: string) {

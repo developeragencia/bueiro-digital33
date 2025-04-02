@@ -53,15 +53,13 @@ class StatusService {
         .from('platform_status')
         .select('*')
         .eq('platform_id', platformId)
-        .order('created_at', { ascending: false })
-        .limit(1)
         .single();
 
       if (error) throw error;
 
       return {
-        isActive: data.is_active,
-        lastChecked: new Date(data.last_checked),
+        is_active: data.is_active,
+        last_checked: data.last_checked,
         uptime: data.uptime,
         latency: data.latency,
         errors: data.errors
@@ -95,53 +93,20 @@ class StatusService {
   async checkPlatformStatus(platformId: string): Promise<PlatformStatus> {
     try {
       const startTime = Date.now();
-      let isActive = true;
-      let errors = 0;
-
-      // Get the platform configuration
-      const { data: platform, error: platformError } = await supabase
-        .from('payment_platforms')
-        .select('*')
-        .eq('id', platformId)
-        .single();
-
-      if (platformError) {
-        isActive = false;
-        errors++;
-      }
-
-      // Check if we can connect to the platform's API
-      if (platform?.api_key) {
-        try {
-          // Here you would implement the actual API health check
-          // This is just a placeholder
-          await this.mockApiHealthCheck();
-        } catch (error) {
-          isActive = false;
-          errors++;
-        }
-      }
-
-      const endTime = Date.now();
-      const latency = endTime - startTime;
-
-      // Get the current status to calculate uptime
-      const currentStatus = await this.getStatus(platformId).catch(() => null);
-      const uptime = this.calculateUptime(currentStatus?.uptime ?? 100, isActive);
+      const isActive = await this.checkApiConnection(platformId);
+      const latency = Date.now() - startTime;
 
       const status: PlatformStatus = {
-        isActive,
-        lastChecked: new Date(),
-        uptime,
+        is_active: isActive,
+        last_checked: new Date().toISOString(),
+        uptime: isActive ? 100 : 0,
         latency,
-        errors
+        errors: isActive ? 0 : 1
       };
 
-      // Save the status check results
-      await this.createStatus({
-        platform_id: platformId,
-        is_active: status.isActive,
-        last_checked: status.lastChecked.toISOString(),
+      await this.updateStatus(platformId, {
+        is_active: status.is_active,
+        last_checked: status.last_checked,
         uptime: status.uptime,
         latency: status.latency,
         errors: status.errors
