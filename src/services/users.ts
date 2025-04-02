@@ -1,5 +1,5 @@
 import { supabase } from '../config/supabase';
-import type { User } from '../config/supabase';
+import type { User } from '../types/auth';
 
 export const userService = {
   async getProfile(userId: string) {
@@ -113,7 +113,19 @@ export const userService = {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      return data;
+
+      // Mapear os dados para garantir que todos os campos necessários estejam presentes
+      const users: User[] = data.map(user => ({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        is_active: user.is_active || false,
+        role: user.role || 'user',
+        created_at: user.created_at,
+        updated_at: user.updated_at
+      }));
+
+      return users;
     } catch (error) {
       console.error('Erro ao listar usuários:', error);
       throw error;

@@ -1,25 +1,61 @@
-import { PaymentPlatformService } from '../PaymentPlatformService';
 import { Transaction } from '../../../types/payment';
+import { BasePlatformService } from './BasePlatformService';
 
-export class Digistore24Service extends PaymentPlatformService {
-  private baseUrl: string;
-  private headers: HeadersInit;
+export class Digistore24Service extends BasePlatformService {
+  private readonly SANDBOX_API_URL = 'https://api.sandbox.digistore24.com/v1';
+  private readonly PRODUCTION_API_URL = 'https://api.digistore24.com/v1';
 
-  constructor(apiKey: string, secretKey: string, sandbox: boolean = true) {
-    super();
-    this.baseUrl = sandbox
-      ? 'https://api.sandbox.digistore24.com'
-      : 'https://api.digistore24.com';
-    this.headers = {
-      'Content-Type': 'application/json',
-      'X-DS-API-KEY': apiKey,
+  constructor(platformId: string, apiKey: string, secretKey?: string, sandbox: boolean = true) {
+    super(platformId, apiKey, secretKey, sandbox);
+  }
+
+  protected getSandboxApiUrl(): string {
+    return this.SANDBOX_API_URL;
+  }
+
+  protected getProductionApiUrl(): string {
+    return this.PRODUCTION_API_URL;
+  }
+
+  protected getHeaders(): Record<string, string> {
+    return {
+      ...super.getHeaders(),
+      'DS24-API-Key': this.apiKey,
+      'DS24-Signature': this.generateSignature()
     };
   }
 
-  async fetchOrders(): Promise<Transaction[]> {
+  async processPayment(amount: number, currency: string, customer: Transaction['customer'], metadata?: Record<string, any>): Promise<Transaction> {
+    this.validateApiKey();
+
     try {
-      const response = await fetch(`${this.baseUrl}/v1/sales`, {
-        headers: this.headers,
+      const response = await fetch(`${this.getApiUrl()}/orders`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          amount,
+          currency,
+          customer: {
+            first_name: customer.name.split(' ')[0],
+            last_name: customer.name.split(' ').slice(1).join(' '),
+            email: customer.email,
+            phone: customer.phone,
+            country: metadata?.country || 'BR',
+            language: metadata?.language || 'pt_BR'
+          },
+          product: {
+            id: metadata?.productId,
+            name: metadata?.productName,
+            price: amount,
+            currency,
+            quantity: metadata?.quantity || 1
+          },
+          payment: {
+            method: metadata?.paymentMethod || 'credit_card',
+            installments: metadata?.installments || 1
+          },
+          ...metadata
+        })
       });
 
       if (!response.ok) {
@@ -27,129 +63,96 @@ export class Digistore24Service extends PaymentPlatformService {
       }
 
       const data = await response.json();
-      return data.sales.map(this.mapOrderToTransaction);
+
+      const transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'> = {
+        platform_id: this.platformId,
+        order_id: data.order_id,
+        amount,
+        currency,
+        status: this.mapStatus(data.status),
+        customer,
+        payment_method: data.payment_method,
+        metadata: {
+          ...metadata,
+          digistore24_id: data.id,
+          payment_url: data.payment_url,
+          invoice_url: data.invoice_url,
+          affiliate: data.affiliate,
+          commission: data.commission
+        }
+      };
+
+      return this.saveTransaction(transaction);
     } catch (error) {
-      console.error('Erro ao buscar pedidos do Digistore24:', error);
-      throw error;
+      return this.handleApiError(error);
     }
   }
 
-  private mapOrderToTransaction(order: any): Transaction {
-    return {
-      id: order.sale_id.toString(),
-      platformId: 'digistore24',
-      orderId: order.order_id,
-      amount: order.total_amount,
-      currency: order.currency,
-      status: this.mapStatus(order.status),
-      customer: {
-        name: `${order.customer.first_name} ${order.customer.last_name}`,
-        email: order.customer.email,
-        phone: order.customer.phone,
-      },
-      product: {
-        id: order.product.id.toString(),
-        name: order.product.name,
-        price: order.product.price,
-        quantity: order.product.quantity,
-      },
-      paymentMethod: order.payment_method,
-      createdAt: new Date(order.created_at * 1000), // Digistore24 usa timestamp Unix
-      updatedAt: new Date(order.updated_at * 1000),
-      metadata: {
-        product: {
-          description: order.product.description,
-          category: order.product.category,
-          language: order.product.language,
-        },
-        customer: {
-          country: order.customer.country,
-          language: order.customer.language,
-          ip_country: order.customer.ip_country,
-        },
-        affiliate: {
-          id: order.affiliate.id,
-          name: order.affiliate.name,
-          commission: order.affiliate.commission,
-        },
-        payment: {
-          installments: order.payment.installments,
-          installment_amount: order.payment.installment_amount,
-          payment_plan: order.payment.plan,
-        },
-        marketing: {
-          funnel_id: order.marketing.funnel_id,
-          funnel_name: order.marketing.funnel_name,
-          source: order.marketing.source,
-          campaign: order.marketing.campaign,
-        },
-      },
-    };
-  }
+  async processRefund(transactionId: string): Promise<boolean> {
+    this.validateApiKey();
 
-  private mapStatus(status: string): 'completed' | 'pending' | 'failed' {
-    switch (status.toLowerCase()) {
-      case 'completed':
-      case 'delivered':
-        return 'completed';
-      case 'pending':
-      case 'processing':
-        return 'pending';
-      case 'cancelled':
-      case 'refunded':
-      case 'chargeback':
-      default:
-        return 'failed';
-    }
-  }
-
-  async syncTransactions(): Promise<void> {
     try {
-      const orders = await this.fetchOrders();
-      for (const order of orders) {
-        await this.saveTransaction(order);
-      }
-    } catch (error) {
-      console.error('Erro ao sincronizar transações do Digistore24:', error);
-      throw error;
-    }
-  }
-
-  async createWebhook(url: string): Promise<void> {
-    try {
-      const response = await fetch(`${this.baseUrl}/v1/webhooks`, {
+      const response = await fetch(`${this.getApiUrl()}/orders/${transactionId}/refund`, {
         method: 'POST',
-        headers: this.headers,
+        headers: this.getHeaders(),
         body: JSON.stringify({
-          url,
-          events: [
-            'sale.created',
-            'sale.completed',
-            'sale.cancelled',
-            'sale.refunded',
-            'sale.chargeback',
-          ],
-        }),
+          reason: 'Customer request',
+          refund_type: 'full'
+        })
       });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
+
+      const data = await response.json();
+
+      if (data.success) {
+        await this.updateTransactionStatus(transactionId, 'refunded');
+        return true;
+      }
+
+      return false;
     } catch (error) {
-      console.error('Erro ao criar webhook no Digistore24:', error);
-      throw error;
+      return this.handleApiError(error);
     }
   }
 
-  async handleWebhook(payload: any): Promise<void> {
-    try {
-      if (payload.event.startsWith('sale.')) {
-        const transaction = this.mapOrderToTransaction(payload.data);
-        await this.saveTransaction(transaction);
-      }
-    } catch (error) {
-      console.error('Erro ao processar webhook do Digistore24:', error);
-      throw error;
-    }
+  validateWebhook(payload: any, signature: string): boolean {
+    this.validateSecretKey();
+    const calculatedSignature = this.calculateSignature(payload);
+    return calculatedSignature === signature;
+  }
+
+  private calculateSignature(payload: any): string {
+    const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    return require('crypto')
+      .createHmac('sha256', this.secretKey!)
+      .update(data)
+      .digest('hex');
+  }
+
+  private generateSignature(): string {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const data = `${this.apiKey}${timestamp}`;
+    return require('crypto')
+      .createHmac('sha256', this.secretKey!)
+      .update(data)
+      .digest('hex');
+  }
+
+  private mapStatus(status: string): Transaction['status'] {
+    const statusMap: Record<string, Transaction['status']> = {
+      'completed': 'completed',
+      'pending': 'pending',
+      'processing': 'processing',
+      'failed': 'failed',
+      'refunded': 'refunded',
+      'partially_refunded': 'refunded',
+      'cancelled': 'cancelled',
+      'expired': 'failed'
+    };
+
+    return statusMap[status.toLowerCase()] || 'pending';
   }
 } 

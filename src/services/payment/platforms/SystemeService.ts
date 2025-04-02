@@ -1,25 +1,61 @@
-import { PaymentPlatformService } from '../PaymentPlatformService';
 import { Transaction } from '../../../types/payment';
+import { BasePlatformService } from './BasePlatformService';
 
-export class SystemeService extends PaymentPlatformService {
-  private baseUrl: string;
-  private headers: HeadersInit;
+export class SystemeService extends BasePlatformService {
+  private readonly SANDBOX_API_URL = 'https://sandbox.api.systeme.io/v1';
+  private readonly PRODUCTION_API_URL = 'https://api.systeme.io/v1';
 
-  constructor(apiKey: string, secretKey: string, sandbox: boolean = true) {
-    super();
-    this.baseUrl = sandbox
-      ? 'https://api.sandbox.systeme.io'
-      : 'https://api.systeme.io';
-    this.headers = {
-      'Content-Type': 'application/json',
-      'X-Api-Key': apiKey,
+  constructor(platformId: string, apiKey: string, secretKey?: string, sandbox: boolean = true) {
+    super(platformId, apiKey, secretKey, sandbox);
+  }
+
+  protected getSandboxApiUrl(): string {
+    return this.SANDBOX_API_URL;
+  }
+
+  protected getProductionApiUrl(): string {
+    return this.PRODUCTION_API_URL;
+  }
+
+  protected getHeaders(): Record<string, string> {
+    return {
+      ...super.getHeaders(),
+      'X-Systeme-Key': this.apiKey,
+      'X-Systeme-Signature': this.generateSignature()
     };
   }
 
-  async fetchOrders(): Promise<Transaction[]> {
+  async processPayment(amount: number, currency: string, customer: Transaction['customer'], metadata?: Record<string, any>): Promise<Transaction> {
+    this.validateApiKey();
+
     try {
-      const response = await fetch(`${this.baseUrl}/api/v1/orders`, {
-        headers: this.headers,
+      const response = await fetch(`${this.getApiUrl()}/orders`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          amount,
+          currency,
+          customer: {
+            name: customer.name,
+            email: customer.email,
+            phone: customer.phone,
+            document: customer.document,
+            address: metadata?.address
+          },
+          product: {
+            id: metadata?.productId,
+            name: metadata?.productName,
+            price: amount,
+            quantity: metadata?.quantity || 1
+          },
+          payment: {
+            method: metadata?.paymentMethod || 'credit_card',
+            installments: metadata?.installments || 1,
+            card: metadata?.card
+          },
+          notification_url: metadata?.notificationUrl,
+          ...metadata
+        })
       });
 
       if (!response.ok) {
@@ -27,83 +63,114 @@ export class SystemeService extends PaymentPlatformService {
       }
 
       const data = await response.json();
-      return data.orders.map(this.mapOrderToTransaction);
+
+      const transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'> = {
+        platform_id: this.platformId,
+        order_id: data.order_id,
+        amount,
+        currency,
+        status: this.mapStatus(data.status),
+        customer,
+        payment_method: data.payment_method,
+        metadata: {
+          ...metadata,
+          systeme_id: data.id,
+          payment_url: data.payment_url,
+          invoice_url: data.invoice_url,
+          boleto_url: data.boleto_url,
+          pix_qrcode: data.pix_qrcode,
+          pix_code: data.pix_code,
+          installments: data.installments,
+          installment_amount: data.installment_amount,
+          affiliate: data.affiliate,
+          commission: data.commission,
+          funnel_id: data.funnel_id,
+          funnel_name: data.funnel_name,
+          step_id: data.step_id,
+          step_name: data.step_name,
+          campaign_id: data.campaign_id,
+          campaign_name: data.campaign_name,
+          source: data.source,
+          medium: data.medium,
+          content: data.content,
+          term: data.term
+        }
+      };
+
+      return this.saveTransaction(transaction);
     } catch (error) {
-      console.error('Erro ao buscar pedidos do Systeme:', error);
-      throw error;
+      return this.handleApiError(error);
     }
   }
 
-  private mapOrderToTransaction(order: any): Transaction {
-    return {
-      id: order.id.toString(),
-      platformId: 'systeme',
-      orderId: order.order_number,
-      amount: order.total_amount,
-      currency: order.currency || 'BRL',
-      status: order.status === 'completed' ? 'completed' : 'pending',
-      customer: {
-        name: order.customer.name,
-        email: order.customer.email,
-        phone: order.customer.phone,
-      },
-      product: {
-        id: order.items[0].product_id.toString(),
-        name: order.items[0].name,
-        price: order.items[0].price,
-        quantity: order.items[0].quantity,
-      },
-      paymentMethod: order.payment_method,
-      createdAt: new Date(order.created_at),
-      updatedAt: new Date(order.updated_at),
-      metadata: {
-        items: order.items,
-        billingAddress: order.billing_address,
-        affiliateId: order.affiliate_id,
-        campaignId: order.campaign_id,
-      },
-    };
-  }
+  async processRefund(transactionId: string): Promise<boolean> {
+    this.validateApiKey();
 
-  async syncTransactions(): Promise<void> {
     try {
-      const orders = await this.fetchOrders();
-      for (const order of orders) {
-        await this.saveTransaction(order);
-      }
-    } catch (error) {
-      console.error('Erro ao sincronizar transações do Systeme:', error);
-      throw error;
-    }
-  }
-
-  async createWebhook(url: string): Promise<void> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/v1/webhooks`, {
+      const response = await fetch(`${this.getApiUrl()}/orders/${transactionId}/refund`, {
         method: 'POST',
-        headers: this.headers,
-        body: JSON.stringify({
-          url,
-          events: ['order.created', 'order.updated', 'order.completed'],
-        }),
+        headers: this.getHeaders()
       });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
+
+      const data = await response.json();
+
+      if (data.success) {
+        await this.updateTransactionStatus(transactionId, 'refunded');
+        return true;
+      }
+
+      return false;
     } catch (error) {
-      console.error('Erro ao criar webhook no Systeme:', error);
-      throw error;
+      return this.handleApiError(error);
     }
   }
 
-  async handleWebhook(payload: any): Promise<void> {
-    try {
-      const transaction = this.mapOrderToTransaction(payload.data);
-      await this.saveTransaction(transaction);
-    } catch (error) {
-      console.error('Erro ao processar webhook do Systeme:', error);
-      throw error;
-    }
+  validateWebhook(payload: any, signature: string): boolean {
+    this.validateSecretKey();
+    const calculatedSignature = this.calculateSignature(payload);
+    return calculatedSignature === signature;
+  }
+
+  private calculateSignature(payload: any): string {
+    const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    return require('crypto')
+      .createHmac('sha256', this.secretKey!)
+      .update(data)
+      .digest('hex');
+  }
+
+  private generateSignature(): string {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const data = `${this.apiKey}${timestamp}`;
+    return require('crypto')
+      .createHmac('sha256', this.secretKey!)
+      .update(data)
+      .digest('hex');
+  }
+
+  private mapStatus(status: string): Transaction['status'] {
+    const statusMap: Record<string, Transaction['status']> = {
+      'approved': 'completed',
+      'pending': 'pending',
+      'processing': 'processing',
+      'failed': 'failed',
+      'refunded': 'refunded',
+      'partially_refunded': 'refunded',
+      'cancelled': 'cancelled',
+      'expired': 'failed',
+      'chargeback': 'failed',
+      'dispute': 'processing',
+      'waiting_payment': 'pending',
+      'analysis': 'processing',
+      'fraud_analysis': 'processing',
+      'high_risk': 'failed',
+      'blocked': 'failed'
+    };
+
+    return statusMap[status.toLowerCase()] || 'pending';
   }
 } 

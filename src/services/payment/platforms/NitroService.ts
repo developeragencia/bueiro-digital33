@@ -1,26 +1,61 @@
-import { PaymentPlatformService } from '../PaymentPlatformService';
 import { Transaction } from '../../../types/payment';
+import { BasePlatformService } from './BasePlatformService';
 
-export class NitroService extends PaymentPlatformService {
-  private baseUrl: string;
-  private headers: HeadersInit;
+export class NitroService extends BasePlatformService {
+  private readonly SANDBOX_API_URL = 'https://sandbox.api.nitropay.com.br/v1';
+  private readonly PRODUCTION_API_URL = 'https://api.nitropay.com.br/v1';
 
-  constructor(apiKey: string, secretKey: string, sandbox: boolean = true) {
-    super();
-    this.baseUrl = sandbox
-      ? 'https://api.sandbox.nitropay.com.br'
-      : 'https://api.nitropay.com.br';
-    this.headers = {
-      'Content-Type': 'application/json',
-      'X-Api-Key': apiKey,
-      'X-Secret-Key': secretKey,
+  constructor(platformId: string, apiKey: string, secretKey?: string, sandbox: boolean = true) {
+    super(platformId, apiKey, secretKey, sandbox);
+  }
+
+  protected getSandboxApiUrl(): string {
+    return this.SANDBOX_API_URL;
+  }
+
+  protected getProductionApiUrl(): string {
+    return this.PRODUCTION_API_URL;
+  }
+
+  protected getHeaders(): Record<string, string> {
+    return {
+      ...super.getHeaders(),
+      'X-Nitro-Key': this.apiKey,
+      'X-Nitro-Signature': this.generateSignature()
     };
   }
 
-  async fetchOrders(): Promise<Transaction[]> {
+  async processPayment(amount: number, currency: string, customer: Transaction['customer'], metadata?: Record<string, any>): Promise<Transaction> {
+    this.validateApiKey();
+
     try {
-      const response = await fetch(`${this.baseUrl}/v1/transactions`, {
-        headers: this.headers,
+      const response = await fetch(`${this.getApiUrl()}/transactions`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          amount,
+          currency,
+          customer: {
+            name: customer.name,
+            email: customer.email,
+            phone: customer.phone,
+            document: customer.document,
+            address: metadata?.address
+          },
+          product: {
+            id: metadata?.productId,
+            name: metadata?.productName,
+            price: amount,
+            quantity: metadata?.quantity || 1
+          },
+          payment: {
+            method: metadata?.paymentMethod || 'credit_card',
+            installments: metadata?.installments || 1,
+            card: metadata?.card
+          },
+          notification_url: metadata?.notificationUrl,
+          ...metadata
+        })
       });
 
       if (!response.ok) {
@@ -28,155 +63,108 @@ export class NitroService extends PaymentPlatformService {
       }
 
       const data = await response.json();
-      return data.transactions.map(this.mapOrderToTransaction);
+
+      const transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'> = {
+        platform_id: this.platformId,
+        order_id: data.transaction_id,
+        amount,
+        currency,
+        status: this.mapStatus(data.status),
+        customer,
+        payment_method: data.payment_method,
+        metadata: {
+          ...metadata,
+          nitro_id: data.id,
+          payment_url: data.payment_url,
+          invoice_url: data.invoice_url,
+          boleto_url: data.boleto_url,
+          pix_qrcode: data.pix_qrcode,
+          pix_code: data.pix_code,
+          installments: data.installments,
+          installment_amount: data.installment_amount,
+          affiliate: data.affiliate,
+          commission: data.commission,
+          producer: data.producer,
+          producer_commission: data.producer_commission,
+          antifraud_score: data.antifraud_score,
+          risk_level: data.risk_level
+        }
+      };
+
+      return this.saveTransaction(transaction);
     } catch (error) {
-      console.error('Erro ao buscar transações do Nitro:', error);
-      throw error;
+      return this.handleApiError(error);
     }
   }
 
-  private mapOrderToTransaction(transaction: any): Transaction {
-    return {
-      id: transaction.id.toString(),
-      platformId: 'nitro',
-      orderId: transaction.order_id,
-      amount: transaction.amount,
-      currency: transaction.currency || 'BRL',
-      status: this.mapStatus(transaction.status),
-      customer: {
-        name: transaction.customer.name,
-        email: transaction.customer.email,
-        phone: transaction.customer.phone,
-        document: transaction.customer.document,
-      },
-      product: {
-        id: transaction.product.id,
-        name: transaction.product.name,
-        price: transaction.product.price,
-        quantity: transaction.product.quantity,
-      },
-      paymentMethod: transaction.payment_method,
-      createdAt: new Date(transaction.created_at),
-      updatedAt: new Date(transaction.updated_at),
-      metadata: {
-        payment: {
-          installments: transaction.payment_details.installments,
-          installmentAmount: transaction.payment_details.installment_amount,
-          paymentLink: transaction.payment_details.payment_link,
-          pixQrCode: transaction.payment_details.pix_qr_code,
-          pixKey: transaction.payment_details.pix_key,
-          boletoUrl: transaction.payment_details.boleto_url,
-          boletoBarcode: transaction.payment_details.boleto_barcode,
-          cardBrand: transaction.payment_details.card_brand,
-          cardLastFour: transaction.payment_details.card_last_four,
-        },
-        customer: {
-          address: transaction.customer.address,
-          city: transaction.customer.city,
-          state: transaction.customer.state,
-          zipcode: transaction.customer.zipcode,
-          country: transaction.customer.country,
-        },
-        seller: {
-          id: transaction.seller.id,
-          name: transaction.seller.name,
-          commission: transaction.seller.commission,
-          type: transaction.seller.type,
-        },
-        subscription: {
-          id: transaction.subscription?.id,
-          status: transaction.subscription?.status,
-          interval: transaction.subscription?.interval,
-          intervalCount: transaction.subscription?.interval_count,
-          startDate: transaction.subscription?.start_date,
-          endDate: transaction.subscription?.end_date,
-        },
-        risk: {
-          score: transaction.risk_analysis?.score,
-          level: transaction.risk_analysis?.level,
-          recommendation: transaction.risk_analysis?.recommendation,
-          factors: transaction.risk_analysis?.factors,
-        },
-      },
-    };
-  }
+  async processRefund(transactionId: string): Promise<boolean> {
+    this.validateApiKey();
 
-  private mapStatus(status: string): 'completed' | 'pending' | 'failed' {
-    switch (status.toLowerCase()) {
-      case 'approved':
-      case 'paid':
-      case 'captured':
-      case 'completed':
-        return 'completed';
-      case 'pending':
-      case 'waiting_payment':
-      case 'processing':
-      case 'authorized':
-        return 'pending';
-      case 'cancelled':
-      case 'refunded':
-      case 'chargeback':
-      case 'expired':
-      case 'failed':
-      default:
-        return 'failed';
-    }
-  }
-
-  async syncTransactions(): Promise<void> {
     try {
-      const transactions = await this.fetchOrders();
-      for (const transaction of transactions) {
-        await this.saveTransaction(transaction);
-      }
-    } catch (error) {
-      console.error('Erro ao sincronizar transações do Nitro:', error);
-      throw error;
-    }
-  }
-
-  async createWebhook(url: string): Promise<void> {
-    try {
-      const response = await fetch(`${this.baseUrl}/v1/webhooks`, {
+      const response = await fetch(`${this.getApiUrl()}/transactions/${transactionId}/refund`, {
         method: 'POST',
-        headers: this.headers,
-        body: JSON.stringify({
-          url,
-          events: [
-            'transaction.created',
-            'transaction.authorized',
-            'transaction.paid',
-            'transaction.failed',
-            'transaction.cancelled',
-            'transaction.refunded',
-            'transaction.chargeback',
-            'subscription.created',
-            'subscription.activated',
-            'subscription.cancelled',
-            'subscription.expired',
-          ],
-          active: true,
-        }),
+        headers: this.getHeaders()
       });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
+
+      const data = await response.json();
+
+      if (data.success) {
+        await this.updateTransactionStatus(transactionId, 'refunded');
+        return true;
+      }
+
+      return false;
     } catch (error) {
-      console.error('Erro ao criar webhook no Nitro:', error);
-      throw error;
+      return this.handleApiError(error);
     }
   }
 
-  async handleWebhook(payload: any): Promise<void> {
-    try {
-      if (payload.event.startsWith('transaction.')) {
-        const transaction = this.mapOrderToTransaction(payload.data);
-        await this.saveTransaction(transaction);
-      }
-    } catch (error) {
-      console.error('Erro ao processar webhook do Nitro:', error);
-      throw error;
-    }
+  validateWebhook(payload: any, signature: string): boolean {
+    this.validateSecretKey();
+    const calculatedSignature = this.calculateSignature(payload);
+    return calculatedSignature === signature;
+  }
+
+  private calculateSignature(payload: any): string {
+    const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    return require('crypto')
+      .createHmac('sha256', this.secretKey!)
+      .update(data)
+      .digest('hex');
+  }
+
+  private generateSignature(): string {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const data = `${this.apiKey}${timestamp}`;
+    return require('crypto')
+      .createHmac('sha256', this.secretKey!)
+      .update(data)
+      .digest('hex');
+  }
+
+  private mapStatus(status: string): Transaction['status'] {
+    const statusMap: Record<string, Transaction['status']> = {
+      'approved': 'completed',
+      'pending': 'pending',
+      'processing': 'processing',
+      'failed': 'failed',
+      'refunded': 'refunded',
+      'partially_refunded': 'refunded',
+      'cancelled': 'cancelled',
+      'expired': 'failed',
+      'chargeback': 'failed',
+      'dispute': 'processing',
+      'waiting_payment': 'pending',
+      'analysis': 'processing',
+      'fraud_analysis': 'processing',
+      'high_risk': 'failed',
+      'blocked': 'failed'
+    };
+
+    return statusMap[status.toLowerCase()] || 'pending';
   }
 } 

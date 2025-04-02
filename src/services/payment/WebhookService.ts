@@ -1,190 +1,279 @@
+import { PaymentPlatform, Transaction } from '../../types/payment';
 import { supabase } from '../../lib/supabase';
-import { WebhookConfig } from '../../types/payment';
+import { getPlatformService } from './platforms';
 
-interface WebhookEvent {
-  id: string;
-  created_at: string;
-  platform_id: string;
-  event_type: string;
-  event_data: any;
-  status: 'pending' | 'processed' | 'failed';
-  attempts: number;
-  last_attempt: string | null;
-  error: string | null;
-}
+export class WebhookService {
+  private readonly table = 'webhooks';
 
-class WebhookService {
-  async createEvent(event: Omit<WebhookEvent, 'id' | 'created_at'>) {
+  async handleWebhook(platformId: string, payload: any, signature: string): Promise<void> {
     try {
-      const { data, error } = await supabase
-        .from('webhook_events')
-        .insert([event])
-        .select()
-        .single();
+      const platform = await this.getPlatform(platformId);
+      if (!platform) {
+        throw new Error('Platform not found');
+      }
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error creating webhook event:', error);
-      throw error;
-    }
-  }
-
-  async updateEvent(id: string, event: Partial<WebhookEvent>) {
-    try {
-      const { data, error } = await supabase
-        .from('webhook_events')
-        .update(event)
-        .eq('id', id)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error updating webhook event:', error);
-      throw error;
-    }
-  }
-
-  async getEvent(id: string) {
-    try {
-      const { data, error } = await supabase
-        .from('webhook_events')
-        .select('*')
-        .eq('id', id)
-        .single();
-
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error getting webhook event:', error);
-      throw error;
-    }
-  }
-
-  async getEventsByPlatform(platformId: string) {
-    try {
-      const { data, error } = await supabase
-        .from('webhook_events')
-        .select('*')
-        .eq('platform_id', platformId);
-
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error getting platform webhook events:', error);
-      throw error;
-    }
-  }
-
-  async getPendingEvents() {
-    try {
-      const { data, error } = await supabase
-        .from('webhook_events')
-        .select('*')
-        .eq('status', 'pending')
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error getting pending webhook events:', error);
-      throw error;
-    }
-  }
-
-  async getFailedEvents() {
-    try {
-      const { data, error } = await supabase
-        .from('webhook_events')
-        .select('*')
-        .eq('status', 'failed')
-        .order('last_attempt', { ascending: false });
-
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error getting failed webhook events:', error);
-      throw error;
-    }
-  }
-
-  async retryFailedEvent(id: string) {
-    try {
-      const event = await this.getEvent(id);
-      if (!event) throw new Error('Event not found');
-
-      // Increment attempts and update last attempt
-      await this.updateEvent(id, {
-        status: 'pending',
-        attempts: event.attempts + 1,
-        last_attempt: new Date().toISOString(),
-        error: null
+      const service = getPlatformService(platform.type, {
+        apiKey: platform.settings.apiKey,
+        secretKey: platform.settings.secretKey,
+        sandbox: platform.settings.sandbox || false
       });
 
-      return await this.getEvent(id);
+      const isValid = service.validateWebhook(payload, signature);
+      if (!isValid) {
+        throw new Error('Invalid webhook signature');
+      }
+
+      await this.saveWebhook({
+        platform_id: platformId,
+        event: payload.event,
+        payload,
+        status: 'received'
+      });
+
+      await this.processWebhook(platform, payload);
     } catch (error) {
-      console.error('Error retrying failed webhook event:', error);
+      console.error('Error handling webhook:', error);
+      await this.saveWebhook({
+        platform_id: platformId,
+        event: payload?.event,
+        payload,
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
       throw error;
     }
   }
 
-  async deleteEvent(id: string) {
-    try {
-      const { error } = await supabase
-        .from('webhook_events')
-        .delete()
-        .eq('id', id);
+  private async getPlatform(platformId: string): Promise<PaymentPlatform | null> {
+    const { data, error } = await supabase
+      .from('payment_platforms')
+      .select('*')
+      .eq('id', platformId)
+      .single();
 
-      if (error) throw error;
-    } catch (error) {
-      console.error('Error deleting webhook event:', error);
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  }
+
+  private async saveWebhook(data: {
+    platform_id: string;
+    event: string;
+    payload: any;
+    status: 'received' | 'processed' | 'failed';
+    error?: string;
+  }): Promise<void> {
+    const { error } = await supabase
+      .from(this.table)
+      .insert([data]);
+
+    if (error) {
       throw error;
     }
   }
 
-  async cleanupOldEvents(daysToKeep = 30) {
+  private async processWebhook(platform: PaymentPlatform, payload: any): Promise<void> {
     try {
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+      switch (payload.event) {
+        case 'payment.created':
+        case 'payment.approved':
+        case 'payment.pending':
+        case 'payment.failed':
+        case 'payment.refunded':
+        case 'payment.chargeback':
+          await this.processPaymentWebhook(platform, payload);
+          break;
+        case 'subscription.created':
+        case 'subscription.activated':
+        case 'subscription.cancelled':
+        case 'subscription.expired':
+          await this.processSubscriptionWebhook(platform, payload);
+          break;
+        case 'customer.created':
+        case 'customer.updated':
+        case 'customer.deleted':
+          await this.processCustomerWebhook(platform, payload);
+          break;
+        default:
+          console.warn(`Unhandled webhook event: ${payload.event}`);
+      }
 
-      const { error } = await supabase
-        .from('webhook_events')
-        .delete()
-        .lt('created_at', cutoffDate.toISOString());
-
-      if (error) throw error;
+      await this.saveWebhook({
+        platform_id: platform.id,
+        event: payload.event,
+        payload,
+        status: 'processed'
+      });
     } catch (error) {
-      console.error('Error cleaning up old webhook events:', error);
+      console.error('Error processing webhook:', error);
+      await this.saveWebhook({
+        platform_id: platform.id,
+        event: payload.event,
+        payload,
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
       throw error;
     }
   }
 
-  validateWebhookConfig(config: WebhookConfig): boolean {
-    if (!config.url || !this.isValidUrl(config.url)) {
-      return false;
+  private async processPaymentWebhook(platform: PaymentPlatform, payload: any): Promise<void> {
+    const { data: transaction, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('platform_id', platform.id)
+      .eq('order_id', payload.data.order_id)
+      .single();
+
+    if (error) {
+      throw error;
     }
 
-    if (config.secret && config.secret.length < 32) {
-      return false;
-    }
+    if (!transaction) {
+      const service = getPlatformService(platform.type, {
+        apiKey: platform.settings.apiKey,
+        secretKey: platform.settings.secretKey,
+        sandbox: platform.settings.sandbox || false
+      });
 
-    if (config.events && !Array.isArray(config.events)) {
-      return false;
-    }
+      const newTransaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'> = {
+        platform_id: platform.id,
+        order_id: payload.data.order_id,
+        amount: payload.data.amount,
+        currency: payload.data.currency,
+        status: this.mapWebhookStatus(payload.event),
+        customer: {
+          name: payload.data.customer.name,
+          email: payload.data.customer.email,
+          phone: payload.data.customer.phone,
+          document: payload.data.customer.document
+        },
+        payment_method: payload.data.payment_method,
+        metadata: payload.data
+      };
 
-    return true;
+      await service.saveTransaction(newTransaction);
+    } else {
+      const { error: updateError } = await supabase
+        .from('transactions')
+        .update({
+          status: this.mapWebhookStatus(payload.event),
+          metadata: { ...transaction.metadata, ...payload.data }
+        })
+        .eq('id', transaction.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+    }
   }
 
-  private isValidUrl(url: string): boolean {
-    try {
-      new URL(url);
-      return true;
-    } catch {
-      return false;
+  private async processSubscriptionWebhook(platform: PaymentPlatform, payload: any): Promise<void> {
+    // Implement subscription webhook processing logic
+    console.log('Processing subscription webhook:', payload);
+  }
+
+  private async processCustomerWebhook(platform: PaymentPlatform, payload: any): Promise<void> {
+    // Implement customer webhook processing logic
+    console.log('Processing customer webhook:', payload);
+  }
+
+  private mapWebhookStatus(event: string): Transaction['status'] {
+    switch (event) {
+      case 'payment.approved':
+        return 'completed';
+      case 'payment.pending':
+        return 'pending';
+      case 'payment.failed':
+        return 'failed';
+      case 'payment.refunded':
+        return 'refunded';
+      case 'payment.chargeback':
+        return 'failed';
+      default:
+        return 'pending';
+    }
+  }
+
+  async getWebhooksByPlatformId(platformId: string): Promise<any[]> {
+    const { data, error } = await supabase
+      .from(this.table)
+      .select('*')
+      .eq('platform_id', platformId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  }
+
+  async getWebhooksByStatus(status: 'received' | 'processed' | 'failed'): Promise<any[]> {
+    const { data, error } = await supabase
+      .from(this.table)
+      .select('*')
+      .eq('status', status)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  }
+
+  async getFailedWebhooks(): Promise<any[]> {
+    return this.getWebhooksByStatus('failed');
+  }
+
+  async retryFailedWebhook(webhookId: string): Promise<void> {
+    const { data: webhook, error: fetchError } = await supabase
+      .from(this.table)
+      .select('*')
+      .eq('id', webhookId)
+      .single();
+
+    if (fetchError) {
+      throw fetchError;
+    }
+
+    if (!webhook) {
+      throw new Error('Webhook not found');
+    }
+
+    const platform = await this.getPlatform(webhook.platform_id);
+    if (!platform) {
+      throw new Error('Platform not found');
+    }
+
+    await this.processWebhook(platform, webhook.payload);
+  }
+
+  async deleteWebhook(webhookId: string): Promise<void> {
+    const { error } = await supabase
+      .from(this.table)
+      .delete()
+      .eq('id', webhookId);
+
+    if (error) {
+      throw error;
+    }
+  }
+
+  async cleanupOldWebhooks(days: number = 30): Promise<void> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+
+    const { error } = await supabase
+      .from(this.table)
+      .delete()
+      .lt('created_at', cutoffDate.toISOString());
+
+    if (error) {
+      throw error;
     }
   }
 }
-
-export const webhookService = new WebhookService(); 

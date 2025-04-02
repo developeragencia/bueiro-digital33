@@ -1,115 +1,107 @@
 import { supabase } from '../../lib/supabase';
-import { Transaction } from '../../types/supabase';
+import { Transaction, TransactionStatus } from '../../types/payment';
 
-class TransactionService {
-  async create(transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>) {
-    try {
-      const { data, error } = await supabase
-        .from('transactions')
-        .insert([transaction])
-        .select()
-        .single();
+export class TransactionServiceClass {
+  private table = 'transactions';
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error creating transaction:', error);
-      throw error;
-    }
+  async create(data: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>): Promise<Transaction> {
+    const { data: transaction, error } = await supabase
+      .from(this.table)
+      .insert([data])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return transaction;
   }
 
-  async update(id: string, transaction: Partial<Transaction>) {
-    try {
-      const { data, error } = await supabase
-        .from('transactions')
-        .update(transaction)
-        .eq('id', id)
-        .select()
-        .single();
+  async update(id: string, data: Partial<Transaction>): Promise<Transaction> {
+    const { data: transaction, error } = await supabase
+      .from(this.table)
+      .update(data)
+      .eq('id', id)
+      .select()
+      .single();
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error updating transaction:', error);
-      throw error;
-    }
+    if (error) throw error;
+    return transaction;
   }
 
-  async delete(id: string) {
-    try {
-      const { error } = await supabase
-        .from('transactions')
-        .delete()
-        .eq('id', id);
+  async delete(id: string): Promise<void> {
+    const { error } = await supabase
+      .from(this.table)
+      .delete()
+      .eq('id', id);
 
-      if (error) throw error;
-    } catch (error) {
-      console.error('Error deleting transaction:', error);
-      throw error;
-    }
+    if (error) throw error;
   }
 
-  async getById(id: string) {
-    try {
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('id', id)
-        .single();
+  async getById(id: string): Promise<Transaction> {
+    const { data: transaction, error } = await supabase
+      .from(this.table)
+      .select('*')
+      .eq('id', id)
+      .single();
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error getting transaction:', error);
-      throw error;
-    }
+    if (error) throw error;
+    return transaction;
   }
 
-  async getByUserId(userId: string) {
-    try {
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('user_id', userId);
+  async getByUserId(userId: string): Promise<Transaction[]> {
+    const { data: transactions, error } = await supabase
+      .from(this.table)
+      .select('*')
+      .eq('user_id', userId);
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error getting user transactions:', error);
-      throw error;
-    }
+    if (error) throw error;
+    return transactions;
   }
 
-  async getByPlatformId(platformId: string) {
-    try {
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('platform_id', platformId);
+  async getByPlatformId(platformId: string): Promise<Transaction[]> {
+    const { data: transactions, error } = await supabase
+      .from(this.table)
+      .select('*')
+      .eq('platform_id', platformId);
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error getting platform transactions:', error);
-      throw error;
-    }
+    if (error) throw error;
+    return transactions;
   }
 
-  async getByOrderId(orderId: string) {
-    try {
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('order_id', orderId)
-        .single();
+  async getByStatus(status: TransactionStatus): Promise<Transaction[]> {
+    const { data: transactions, error } = await supabase
+      .from(this.table)
+      .select('*')
+      .eq('status', status);
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error getting transaction by order:', error);
-      throw error;
-    }
+    if (error) throw error;
+    return transactions;
+  }
+
+  async updateStatus(id: string, status: TransactionStatus): Promise<Transaction> {
+    return this.update(id, { status });
+  }
+
+  async getByDateRange(startDate: string, endDate: string): Promise<Transaction[]> {
+    const { data: transactions, error } = await supabase
+      .from(this.table)
+      .select('*')
+      .gte('created_at', startDate)
+      .lte('created_at', endDate);
+
+    if (error) throw error;
+    return transactions;
+  }
+
+  async getByOrderId(orderId: string): Promise<Transaction> {
+    const { data: transaction, error } = await supabase
+      .from(this.table)
+      .select('*')
+      .eq('order_id', orderId)
+      .single();
+
+    if (error) throw error;
+    return transaction;
   }
 }
 
-export const transactionService = new TransactionService(); 
+export const TransactionService = new TransactionServiceClass(); 

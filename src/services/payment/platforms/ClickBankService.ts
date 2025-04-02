@@ -1,26 +1,56 @@
-import { PaymentPlatformService } from '../PaymentPlatformService';
 import { Transaction } from '../../../types/payment';
+import { BasePlatformService } from './BasePlatformService';
 
-export class ClickBankService extends PaymentPlatformService {
-  private baseUrl: string;
-  private headers: HeadersInit;
+export class ClickBankService extends BasePlatformService {
+  private readonly SANDBOX_API_URL = 'https://api.sandbox.clickbank.com/rest/1.3';
+  private readonly PRODUCTION_API_URL = 'https://api.clickbank.com/rest/1.3';
 
-  constructor(apiKey: string, secretKey: string, sandbox: boolean = true) {
-    super();
-    this.baseUrl = sandbox
-      ? 'https://api.sandbox.clickbank.com'
-      : 'https://api.clickbank.com';
-    this.headers = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'CB-Version': '2.0',
+  constructor(platformId: string, apiKey: string, secretKey?: string, sandbox: boolean = true) {
+    super(platformId, apiKey, secretKey, sandbox);
+  }
+
+  protected getSandboxApiUrl(): string {
+    return this.SANDBOX_API_URL;
+  }
+
+  protected getProductionApiUrl(): string {
+    return this.PRODUCTION_API_URL;
+  }
+
+  protected getHeaders(): Record<string, string> {
+    return {
+      ...super.getHeaders(),
+      'CB-Version': '1.3',
+      'CB-Access-Key': this.apiKey,
+      'CB-Access-Signature': this.generateSignature()
     };
   }
 
-  async fetchOrders(): Promise<Transaction[]> {
+  async processPayment(amount: number, currency: string, customer: Transaction['customer'], metadata?: Record<string, any>): Promise<Transaction> {
+    this.validateApiKey();
+    this.validateSecretKey();
+
     try {
-      const response = await fetch(`${this.baseUrl}/rest/1.3/orders`, {
-        headers: this.headers,
+      const response = await fetch(`${this.getApiUrl()}/orders/create`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          amount,
+          currency,
+          customer: {
+            firstName: customer.name.split(' ')[0],
+            lastName: customer.name.split(' ').slice(1).join(' '),
+            email: customer.email,
+            phone: customer.phone,
+            ipAddress: metadata?.ipAddress || '127.0.0.1'
+          },
+          product: {
+            itemNo: metadata?.productId || '',
+            productTitle: metadata?.productName || '',
+            recurring: metadata?.recurring || false
+          },
+          ...metadata
+        })
       });
 
       if (!response.ok) {
@@ -28,134 +58,96 @@ export class ClickBankService extends PaymentPlatformService {
       }
 
       const data = await response.json();
-      return data.orders.map(this.mapOrderToTransaction);
+
+      const transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'> = {
+        platform_id: this.platformId,
+        order_id: data.receipt,
+        amount,
+        currency,
+        status: this.mapStatus(data.transactionStatus),
+        customer,
+        payment_method: 'credit_card',
+        metadata: {
+          ...metadata,
+          clickbank_id: data.receipt,
+          vendor: data.vendor,
+          affiliate: data.affiliate,
+          lineItems: data.lineItems
+        }
+      };
+
+      return this.saveTransaction(transaction);
     } catch (error) {
-      console.error('Erro ao buscar pedidos do ClickBank:', error);
-      throw error;
+      return this.handleApiError(error);
     }
   }
 
-  private mapOrderToTransaction(order: any): Transaction {
-    return {
-      id: order.receipt,
-      platformId: 'clickbank',
-      orderId: order.transactionId,
-      amount: order.totalOrderAmount,
-      currency: order.currency || 'USD',
-      status: this.mapStatus(order.status),
-      customer: {
-        name: order.customer.fullName,
-        email: order.customer.email,
-        phone: order.customer.phone,
-        country: order.customer.country,
-      },
-      product: {
-        id: order.lineItems[0].itemNo,
-        name: order.lineItems[0].productTitle,
-        price: order.lineItems[0].price,
-        quantity: order.lineItems[0].quantity,
-      },
-      paymentMethod: order.paymentMethod,
-      createdAt: new Date(order.transactionTime),
-      updatedAt: new Date(order.lastUpdated),
-      metadata: {
-        vendor: {
-          id: order.vendor.id,
-          name: order.vendor.name,
-          accountId: order.vendor.accountId,
-        },
-        affiliate: {
-          id: order.affiliate.id,
-          name: order.affiliate.name,
-          commission: order.affiliate.commission,
-        },
-        upsell: {
-          isUpsell: order.isUpsell,
-          parentReceipt: order.parentReceipt,
-          upsellFlow: order.upsellFlow,
-        },
-        tracking: {
-          trackingId: order.trackingId,
-          hopCount: order.hopCount,
-          referringUrl: order.referringUrl,
-        },
-        subscription: {
-          isRecurring: order.isRecurring,
-          rebillStatus: order.rebillStatus,
-          nextBillDate: order.nextBillDate,
-          subscriptionId: order.subscriptionId,
-        },
-      },
-    };
-  }
+  async processRefund(transactionId: string): Promise<boolean> {
+    this.validateApiKey();
+    this.validateSecretKey();
 
-  private mapStatus(status: string): 'completed' | 'pending' | 'failed' {
-    switch (status.toLowerCase()) {
-      case 'complete':
-      case 'approved':
-      case 'shipped':
-        return 'completed';
-      case 'pending':
-      case 'processing':
-        return 'pending';
-      case 'refunded':
-      case 'chargeback':
-      case 'cancelled':
-      default:
-        return 'failed';
-    }
-  }
-
-  async syncTransactions(): Promise<void> {
     try {
-      const orders = await this.fetchOrders();
-      for (const order of orders) {
-        await this.saveTransaction(order);
-      }
-    } catch (error) {
-      console.error('Erro ao sincronizar transações do ClickBank:', error);
-      throw error;
-    }
-  }
-
-  async createWebhook(url: string): Promise<void> {
-    try {
-      const response = await fetch(`${this.baseUrl}/rest/1.3/notifications/endpoints`, {
+      const response = await fetch(`${this.getApiUrl()}/orders/refund`, {
         method: 'POST',
-        headers: this.headers,
+        headers: this.getHeaders(),
         body: JSON.stringify({
-          url,
-          events: [
-            'SALE',
-            'BILL',
-            'RFND',
-            'CGBK',
-            'CANCEL',
-            'UNCANCEL',
-            'TEST',
-          ],
-          status: 'ACTIVE',
-          notificationVersion: '2.0',
-        }),
+          receipt: transactionId,
+          reason: 'Customer request'
+        })
       });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
+
+      const data = await response.json();
+
+      if (data.status === 'SUCCESS') {
+        await this.updateTransactionStatus(transactionId, 'refunded');
+        return true;
+      }
+
+      return false;
     } catch (error) {
-      console.error('Erro ao criar webhook no ClickBank:', error);
-      throw error;
+      return this.handleApiError(error);
     }
   }
 
-  async handleWebhook(payload: any): Promise<void> {
-    try {
-      // ClickBank envia notificações IPN em formato específico
-      const transaction = this.mapOrderToTransaction(payload.order);
-      await this.saveTransaction(transaction);
-    } catch (error) {
-      console.error('Erro ao processar webhook do ClickBank:', error);
-      throw error;
-    }
+  validateWebhook(payload: any, signature: string): boolean {
+    this.validateSecretKey();
+    const calculatedSignature = this.calculateSignature(payload);
+    return calculatedSignature === signature;
   }
+
+  private calculateSignature(payload: any): string {
+    const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    return require('crypto')
+      .createHmac('sha256', this.secretKey!)
+      .update(data)
+      .digest('hex');
+  }
+
+  private generateSignature(): string {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const data = `${this.apiKey}${timestamp}`;
+    return require('crypto')
+      .createHmac('sha256', this.secretKey!)
+      .update(data)
+      .digest('hex');
+  }
+
+  private mapStatus(status: string): Transaction['status'] {
+    const statusMap: Record<string, Transaction['status']> = {
+      'COMPLETED': 'completed',
+      'PENDING': 'pending',
+      'PROCESSING': 'processing',
+      'FAILED': 'failed',
+      'REFUNDED': 'refunded',
+      'REVERSED': 'refunded',
+      'CANCELLED': 'cancelled'
+    };
+
+    return statusMap[status] || 'pending';
+  }
+} 
 } 

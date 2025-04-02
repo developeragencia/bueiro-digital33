@@ -1,175 +1,364 @@
 import { supabase } from '../../lib/supabase';
-import { PlatformMetrics } from '../../types/payment';
+import { Transaction } from '../../types/payment';
+import { paymentLogger } from './LogService';
 
-interface MetricsData {
-  id: string;
-  created_at: string;
-  platform_id: string;
+export interface TransactionMetrics {
   total_transactions: number;
-  total_volume: number;
+  total_amount: number;
+  average_amount: number;
   success_rate: number;
-  average_transaction_value: number;
+  failure_rate: number;
   refund_rate: number;
   chargeback_rate: number;
-  updated_at: string;
 }
 
-class MetricsService {
-  async createMetrics(metrics: Omit<MetricsData, 'id' | 'created_at' | 'updated_at'>) {
+export interface PlatformMetrics {
+  platform_id: string;
+  total_transactions: number;
+  total_amount: number;
+  average_amount: number;
+  success_rate: number;
+  failure_rate: number;
+  refund_rate: number;
+  chargeback_rate: number;
+  average_processing_time: number;
+  uptime: number;
+  error_rate: number;
+}
+
+export interface UserMetrics {
+  user_id: string;
+  total_transactions: number;
+  total_amount: number;
+  average_amount: number;
+  success_rate: number;
+  failure_rate: number;
+  refund_rate: number;
+  preferred_payment_methods: Record<string, number>;
+  last_transaction_date: string;
+}
+
+export class PaymentMetricsService {
+  private readonly metricsTable = 'payment_metrics';
+  private readonly transactionsTable = 'transactions';
+  private readonly platformsTable = 'payment_platforms';
+  private readonly logsTable = 'payment_logs';
+
+  async calculateTransactionMetrics(
+    startDate?: string,
+    endDate?: string,
+    platformId?: string,
+    userId?: string
+  ): Promise<TransactionMetrics> {
     try {
-      const { data, error } = await supabase
-        .from('platform_metrics')
-        .insert([metrics])
-        .select()
-        .single();
+      let query = supabase
+        .from(this.transactionsTable)
+        .select('*');
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error creating platform metrics:', error);
-      throw error;
-    }
-  }
-
-  async updateMetrics(id: string, metrics: Partial<MetricsData>) {
-    try {
-      const { data, error } = await supabase
-        .from('platform_metrics')
-        .update(metrics)
-        .eq('id', id)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error updating platform metrics:', error);
-      throw error;
-    }
-  }
-
-  async getMetrics(platformId: string): Promise<PlatformMetrics> {
-    try {
-      const { data, error } = await supabase
-        .from('platform_metrics')
-        .select('*')
-        .eq('platform_id', platformId)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-
-      if (error) throw error;
-
-      return {
-        totalTransactions: data.total_transactions,
-        totalVolume: data.total_volume,
-        successRate: data.success_rate,
-        averageTransactionValue: data.average_transaction_value,
-        refundRate: data.refund_rate,
-        chargebackRate: data.chargeback_rate
-      };
-    } catch (error) {
-      console.error('Error getting platform metrics:', error);
-      throw error;
-    }
-  }
-
-  async getMetricsHistory(platformId: string, days = 30) {
-    try {
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - days);
-
-      const { data, error } = await supabase
-        .from('platform_metrics')
-        .select('*')
-        .eq('platform_id', platformId)
-        .gte('created_at', startDate.toISOString())
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error getting platform metrics history:', error);
-      throw error;
-    }
-  }
-
-  async calculateMetrics(platformId: string): Promise<PlatformMetrics> {
-    try {
-      // Get all transactions for the platform
-      const { data: transactions, error: txError } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('platform_id', platformId);
-
-      if (txError) throw txError;
-
-      if (!transactions || transactions.length === 0) {
-        return {
-          totalTransactions: 0,
-          totalVolume: 0,
-          successRate: 0,
-          averageTransactionValue: 0,
-          refundRate: 0,
-          chargebackRate: 0
-        };
+      if (startDate) {
+        query = query.gte('created_at', startDate);
       }
 
-      // Calculate metrics
+      if (endDate) {
+        query = query.lte('created_at', endDate);
+      }
+
+      if (platformId) {
+        query = query.eq('platform_id', platformId);
+      }
+
+      if (userId) {
+        query = query.eq('user_id', userId);
+      }
+
+      const { data: transactions, error } = await query;
+
+      if (error) {
+        throw error;
+      }
+
       const totalTransactions = transactions.length;
-      const successfulTransactions = transactions.filter(tx => tx.status === 'success');
-      const refundedTransactions = transactions.filter(tx => tx.status === 'refunded');
-      const chargebackTransactions = transactions.filter(tx => tx.status === 'chargeback');
+      const totalAmount = transactions.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+      const successfulTransactions = transactions.filter(tx => tx.status === 'completed').length;
+      const failedTransactions = transactions.filter(tx => tx.status === 'failed').length;
+      const refundedTransactions = transactions.filter(tx => tx.status === 'refunded').length;
+      const chargebackTransactions = transactions.filter(tx => tx.status === 'chargeback').length;
 
-      const totalVolume = transactions.reduce((sum, tx) => sum + tx.amount, 0);
-      const successRate = (successfulTransactions.length / totalTransactions) * 100;
-      const averageTransactionValue = totalVolume / totalTransactions;
-      const refundRate = (refundedTransactions.length / totalTransactions) * 100;
-      const chargebackRate = (chargebackTransactions.length / totalTransactions) * 100;
-
-      const metrics: PlatformMetrics = {
-        totalTransactions,
-        totalVolume,
-        successRate,
-        averageTransactionValue,
-        refundRate,
-        chargebackRate
-      };
-
-      // Save the calculated metrics
-      await this.createMetrics({
-        platform_id: platformId,
+      return {
         total_transactions: totalTransactions,
-        total_volume: totalVolume,
-        success_rate: successRate,
-        average_transaction_value: averageTransactionValue,
-        refund_rate: refundRate,
-        chargeback_rate: chargebackRate
-      });
-
-      return metrics;
+        total_amount: totalAmount,
+        average_amount: totalTransactions > 0 ? totalAmount / totalTransactions : 0,
+        success_rate: totalTransactions > 0 ? (successfulTransactions / totalTransactions) * 100 : 0,
+        failure_rate: totalTransactions > 0 ? (failedTransactions / totalTransactions) * 100 : 0,
+        refund_rate: totalTransactions > 0 ? (refundedTransactions / totalTransactions) * 100 : 0,
+        chargeback_rate: totalTransactions > 0 ? (chargebackTransactions / totalTransactions) * 100 : 0
+      };
     } catch (error) {
-      console.error('Error calculating platform metrics:', error);
+      paymentLogger.error(
+        'Failed to calculate transaction metrics',
+        error,
+        { startDate, endDate, platformId, userId }
+      );
       throw error;
     }
   }
 
-  async deleteOldMetrics(days = 90) {
+  async calculatePlatformMetrics(
+    platformId: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<PlatformMetrics> {
     try {
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - days);
+      const transactionMetrics = await this.calculateTransactionMetrics(startDate, endDate, platformId);
 
-      const { error } = await supabase
-        .from('platform_metrics')
-        .delete()
-        .lt('created_at', cutoffDate.toISOString());
+      // Calcular tempo médio de processamento
+      const { data: transactions, error: txError } = await supabase
+        .from(this.transactionsTable)
+        .select('created_at, updated_at')
+        .eq('platform_id', platformId)
+        .eq('status', 'completed');
 
-      if (error) throw error;
+      if (txError) {
+        throw txError;
+      }
+
+      const processingTimes = transactions
+        .map(tx => new Date(tx.updated_at).getTime() - new Date(tx.created_at).getTime())
+        .filter(time => time > 0);
+
+      const averageProcessingTime = processingTimes.length > 0
+        ? processingTimes.reduce((sum, time) => sum + time, 0) / processingTimes.length
+        : 0;
+
+      // Calcular uptime e taxa de erro
+      const { data: logs, error: logsError } = await supabase
+        .from(this.logsTable)
+        .select('*')
+        .eq('platform_id', platformId)
+        .gte('created_at', startDate || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+
+      if (logsError) {
+        throw logsError;
+      }
+
+      const totalChecks = logs.length;
+      const errorLogs = logs.filter(log => log.level === 'error').length;
+      const uptime = totalChecks > 0 ? ((totalChecks - errorLogs) / totalChecks) * 100 : 100;
+      const errorRate = totalChecks > 0 ? (errorLogs / totalChecks) * 100 : 0;
+
+      return {
+        platform_id: platformId,
+        ...transactionMetrics,
+        average_processing_time: averageProcessingTime,
+        uptime,
+        error_rate: errorRate
+      };
     } catch (error) {
-      console.error('Error deleting old metrics:', error);
+      paymentLogger.error(
+        'Failed to calculate platform metrics',
+        error,
+        { platformId, startDate, endDate }
+      );
       throw error;
     }
+  }
+
+  async calculateUserMetrics(userId: string): Promise<UserMetrics> {
+    try {
+      const transactionMetrics = await this.calculateTransactionMetrics(undefined, undefined, undefined, userId);
+
+      const { data: transactions, error } = await supabase
+        .from(this.transactionsTable)
+        .select('payment_method, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        throw error;
+      }
+
+      const paymentMethods: Record<string, number> = {};
+      transactions.forEach(tx => {
+        if (tx.payment_method) {
+          paymentMethods[tx.payment_method] = (paymentMethods[tx.payment_method] || 0) + 1;
+        }
+      });
+
+      const lastTransactionDate = transactions.length > 0 ? transactions[0].created_at : null;
+
+      return {
+        user_id: userId,
+        ...transactionMetrics,
+        preferred_payment_methods: paymentMethods,
+        last_transaction_date: lastTransactionDate
+      };
+    } catch (error) {
+      paymentLogger.error(
+        'Failed to calculate user metrics',
+        error,
+        { userId }
+      );
+      throw error;
+    }
+  }
+
+  async saveMetricsSnapshot(): Promise<void> {
+    try {
+      const { data: platforms, error: platformsError } = await supabase
+        .from(this.platformsTable)
+        .select('id');
+
+      if (platformsError) {
+        throw platformsError;
+      }
+
+      const metrics = await Promise.all(
+        platforms.map(async platform => {
+          const platformMetrics = await this.calculatePlatformMetrics(platform.id);
+          return {
+            platform_id: platform.id,
+            metrics: platformMetrics,
+            timestamp: new Date().toISOString()
+          };
+        })
+      );
+
+      const { error } = await supabase
+        .from(this.metricsTable)
+        .insert(metrics);
+
+      if (error) {
+        throw error;
+      }
+    } catch (error) {
+      paymentLogger.error(
+        'Failed to save metrics snapshot',
+        error
+      );
+      throw error;
+    }
+  }
+
+  async getMetricsHistory(
+    platformId: string,
+    startDate: string,
+    endDate: string
+  ): Promise<PlatformMetrics[]> {
+    const { data, error } = await supabase
+      .from(this.metricsTable)
+      .select('*')
+      .eq('platform_id', platformId)
+      .gte('timestamp', startDate)
+      .lte('timestamp', endDate)
+      .order('timestamp', { ascending: true });
+
+    if (error) {
+      throw error;
+    }
+
+    return data.map(record => record.metrics);
+  }
+
+  async generateDailyReport(): Promise<Record<string, any>> {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const startDate = new Date(yesterday.setHours(0, 0, 0, 0)).toISOString();
+    const endDate = new Date(yesterday.setHours(23, 59, 59, 999)).toISOString();
+
+    const overallMetrics = await this.calculateTransactionMetrics(startDate, endDate);
+    
+    const { data: platforms, error: platformsError } = await supabase
+      .from(this.platformsTable)
+      .select('id');
+
+    if (platformsError) {
+      throw platformsError;
+    }
+
+    const platformMetrics = await Promise.all(
+      platforms.map(platform => this.calculatePlatformMetrics(platform.id, startDate, endDate))
+    );
+
+    return {
+      date: yesterday.toISOString().split('T')[0],
+      overall: overallMetrics,
+      platforms: platformMetrics
+    };
+  }
+
+  async analyzeTransactionTrends(
+    days: number = 30
+  ): Promise<Record<string, any>> {
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    const dailyMetrics = [];
+    let currentDate = new Date(startDate);
+
+    while (currentDate <= endDate) {
+      const dayStart = new Date(currentDate.setHours(0, 0, 0, 0)).toISOString();
+      const dayEnd = new Date(currentDate.setHours(23, 59, 59, 999)).toISOString();
+
+      const metrics = await this.calculateTransactionMetrics(dayStart, dayEnd);
+      dailyMetrics.push({
+        date: currentDate.toISOString().split('T')[0],
+        metrics
+      });
+
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    return {
+      period: {
+        start: startDate.toISOString().split('T')[0],
+        end: endDate.toISOString().split('T')[0]
+      },
+      daily_metrics: dailyMetrics,
+      trends: this.calculateTrends(dailyMetrics)
+    };
+  }
+
+  private calculateTrends(dailyMetrics: Array<{ date: string; metrics: TransactionMetrics }>): Record<string, any> {
+    const totalDays = dailyMetrics.length;
+    if (totalDays < 2) return {};
+
+    const firstHalf = dailyMetrics.slice(0, Math.floor(totalDays / 2));
+    const secondHalf = dailyMetrics.slice(Math.floor(totalDays / 2));
+
+    const calculateAverage = (metrics: typeof dailyMetrics, key: keyof TransactionMetrics) => {
+      return metrics.reduce((sum, day) => sum + day.metrics[key], 0) / metrics.length;
+    };
+
+    const calculateGrowth = (first: number, second: number) => {
+      return first === 0 ? 0 : ((second - first) / first) * 100;
+    };
+
+    const metrics = [
+      'total_transactions',
+      'total_amount',
+      'average_amount',
+      'success_rate',
+      'failure_rate',
+      'refund_rate',
+      'chargeback_rate'
+    ] as const;
+
+    const trends: Record<string, { growth: number; trend: 'up' | 'down' | 'stable' }> = {};
+
+    metrics.forEach(metric => {
+      const firstHalfAvg = calculateAverage(firstHalf, metric);
+      const secondHalfAvg = calculateAverage(secondHalf, metric);
+      const growth = calculateGrowth(firstHalfAvg, secondHalfAvg);
+
+      trends[metric] = {
+        growth,
+        trend: growth > 1 ? 'up' : growth < -1 ? 'down' : 'stable'
+      };
+    });
+
+    return trends;
   }
 }
 
-export const metricsService = new MetricsService(); 
+export const paymentMetrics = new PaymentMetricsService();

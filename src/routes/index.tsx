@@ -1,42 +1,51 @@
-import { createBrowserRouter, Navigate } from 'react-router-dom';
-import { Layout } from '../components/layout/Layout';
-import Dashboard from '../pages/dashboard/Dashboard';
-import Login from '../pages/auth/Login';
-import Register from '../pages/auth/Register';
-import Settings from '../pages/settings/Settings';
-import Profile from '../pages/Profile';
-import NotFound from '../pages/NotFound';
+import { createBrowserRouter, Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import Layout from '../components/layout/Layout';
+import Dashboard from '../pages/Dashboard';
+import Login from '../pages/Login';
+import Register from '../pages/Register';
+import Settings from '../pages/Settings';
+import Profile from '../pages/Profile';
 
-interface PrivateRouteProps {
-  children: React.ReactNode;
-}
+const NotFound = () => (
+  <div className="flex flex-col items-center justify-center min-h-screen">
+    <h1 className="text-4xl font-bold mb-4">404</h1>
+    <p className="text-xl">Página não encontrada</p>
+  </div>
+);
 
-const PrivateRoute = ({ children }: PrivateRouteProps) => {
-  const { isAuthenticated } = useAuth();
-  return isAuthenticated ? children : <Navigate to="/login" />;
+const PrivateRoute = () => {
+  const { user } = useAuth();
+  return user ? <Outlet /> : <Navigate to="/login" />;
+};
+
+const AdminRoute = () => {
+  const { user } = useAuth();
+  return user?.role === 'admin' ? <Outlet /> : <Navigate to="/" />;
 };
 
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: (
-      <PrivateRoute>
-        <Layout />
-      </PrivateRoute>
-    ),
+    element: <PrivateRoute />,
     children: [
       {
         path: '/',
-        element: <Dashboard />
-      },
-      {
-        path: '/settings',
-        element: <Settings />
-      },
-      {
-        path: '/profile',
-        element: <Profile />
+        element: <Layout><Outlet /></Layout>,
+        children: [
+          {
+            path: '/',
+            element: <Dashboard />
+          },
+          {
+            path: '/settings',
+            element: <Settings />
+          },
+          {
+            path: '/profile',
+            element: <Profile />
+          }
+        ]
       }
     ]
   },

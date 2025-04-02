@@ -1,26 +1,61 @@
-import { PaymentPlatformService } from '../PaymentPlatformService';
 import { Transaction } from '../../../types/payment';
+import { BasePlatformService } from './BasePlatformService';
 
-export class FRCService extends PaymentPlatformService {
-  private baseUrl: string;
-  private headers: HeadersInit;
+export class FRCService extends BasePlatformService {
+  private readonly SANDBOX_API_URL = 'https://sandbox.api.frc.com.br/v1';
+  private readonly PRODUCTION_API_URL = 'https://api.frc.com.br/v1';
 
-  constructor(apiKey: string, secretKey: string, sandbox: boolean = true) {
-    super();
-    this.baseUrl = sandbox
-      ? 'https://api.sandbox.frc.com.br'
-      : 'https://api.frc.com.br';
-    this.headers = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'X-Store-Id': secretKey,
+  constructor(platformId: string, apiKey: string, secretKey?: string, sandbox: boolean = true) {
+    super(platformId, apiKey, secretKey, sandbox);
+  }
+
+  protected getSandboxApiUrl(): string {
+    return this.SANDBOX_API_URL;
+  }
+
+  protected getProductionApiUrl(): string {
+    return this.PRODUCTION_API_URL;
+  }
+
+  protected getHeaders(): Record<string, string> {
+    return {
+      ...super.getHeaders(),
+      'X-FRC-Key': this.apiKey,
+      'X-FRC-Signature': this.generateSignature()
     };
   }
 
-  async fetchOrders(): Promise<Transaction[]> {
+  async processPayment(amount: number, currency: string, customer: Transaction['customer'], metadata?: Record<string, any>): Promise<Transaction> {
+    this.validateApiKey();
+
     try {
-      const response = await fetch(`${this.baseUrl}/v1/orders`, {
-        headers: this.headers,
+      const response = await fetch(`${this.getApiUrl()}/sales`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          amount,
+          currency,
+          customer: {
+            name: customer.name,
+            email: customer.email,
+            phone: customer.phone,
+            document: customer.document,
+            address: metadata?.address
+          },
+          product: {
+            id: metadata?.productId,
+            name: metadata?.productName,
+            price: amount,
+            quantity: metadata?.quantity || 1
+          },
+          payment: {
+            method: metadata?.paymentMethod || 'credit_card',
+            installments: metadata?.installments || 1,
+            card: metadata?.card
+          },
+          notification_url: metadata?.notificationUrl,
+          ...metadata
+        })
       });
 
       if (!response.ok) {
@@ -28,186 +63,101 @@ export class FRCService extends PaymentPlatformService {
       }
 
       const data = await response.json();
-      return data.orders.map(this.mapOrderToTransaction);
+
+      const transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'> = {
+        platform_id: this.platformId,
+        order_id: data.sale_id,
+        amount,
+        currency,
+        status: this.mapStatus(data.status),
+        customer,
+        payment_method: data.payment_method,
+        metadata: {
+          ...metadata,
+          frc_id: data.id,
+          payment_url: data.payment_url,
+          invoice_url: data.invoice_url,
+          boleto_url: data.boleto_url,
+          pix_qrcode: data.pix_qrcode,
+          pix_code: data.pix_code,
+          installments: data.installments,
+          installment_amount: data.installment_amount,
+          affiliate: data.affiliate,
+          commission: data.commission
+        }
+      };
+
+      return this.saveTransaction(transaction);
     } catch (error) {
-      console.error('Erro ao buscar pedidos do FRC:', error);
-      throw error;
+      return this.handleApiError(error);
     }
   }
 
-  private mapOrderToTransaction(order: any): Transaction {
-    return {
-      id: order.id.toString(),
-      platformId: 'frc',
-      orderId: order.reference_id,
-      amount: order.amount,
-      currency: order.currency || 'BRL',
-      status: this.mapStatus(order.status),
-      customer: {
-        name: order.customer.name,
-        email: order.customer.email,
-        phone: order.customer.phone,
-        document: order.customer.document,
-      },
-      product: {
-        id: order.product.id,
-        name: order.product.name,
-        price: order.product.price,
-        quantity: order.product.quantity,
-      },
-      paymentMethod: order.payment_method,
-      createdAt: new Date(order.created_at),
-      updatedAt: new Date(order.updated_at),
-      metadata: {
-        payment: {
-          installments: order.payment_details.installments,
-          installmentAmount: order.payment_details.installment_amount,
-          paymentLink: order.payment_details.payment_link,
-          pixQrCode: order.payment_details.pix_qr_code,
-          pixKey: order.payment_details.pix_key,
-          boletoUrl: order.payment_details.boleto_url,
-          boletoBarcode: order.payment_details.boleto_barcode,
-          cardBrand: order.payment_details.card_brand,
-          cardLastFour: order.payment_details.card_last_four,
-        },
-        customer: {
-          address: order.customer.address,
-          city: order.customer.city,
-          state: order.customer.state,
-          zipcode: order.customer.zipcode,
-          country: order.customer.country,
-        },
-        producer: {
-          id: order.producer?.id,
-          name: order.producer?.name,
-          commission: order.producer?.commission,
-          commissionAmount: order.producer?.commission_amount,
-        },
-        affiliate: {
-          id: order.affiliate?.id,
-          name: order.affiliate?.name,
-          commission: order.affiliate?.commission,
-          commissionAmount: order.affiliate?.commission_amount,
-          level: order.affiliate?.level,
-          parentId: order.affiliate?.parent_id,
-        },
-        course: {
-          id: order.course?.id,
-          name: order.course?.name,
-          type: order.course?.type,
-          platform: order.course?.platform,
-          accessDuration: order.course?.access_duration,
-        },
-        membership: {
-          id: order.membership?.id,
-          name: order.membership?.name,
-          type: order.membership?.type,
-          period: order.membership?.period,
-          startDate: order.membership?.start_date,
-          endDate: order.membership?.end_date,
-        },
-        funnel: {
-          id: order.funnel?.id,
-          name: order.funnel?.name,
-          step: order.funnel?.step,
-          source: order.funnel?.source,
-          medium: order.funnel?.medium,
-          campaign: order.funnel?.campaign,
-        },
-        tracking: {
-          utmSource: order.tracking?.utm_source,
-          utmMedium: order.tracking?.utm_medium,
-          utmCampaign: order.tracking?.utm_campaign,
-          utmTerm: order.tracking?.utm_term,
-          utmContent: order.tracking?.utm_content,
-          fbclid: order.tracking?.fbclid,
-          gclid: order.tracking?.gclid,
-        },
-      },
-    };
-  }
+  async processRefund(transactionId: string): Promise<boolean> {
+    this.validateApiKey();
 
-  private mapStatus(status: string): 'completed' | 'pending' | 'failed' {
-    switch (status.toLowerCase()) {
-      case 'approved':
-      case 'paid':
-      case 'completed':
-        return 'completed';
-      case 'pending':
-      case 'waiting_payment':
-      case 'processing':
-      case 'in_analysis':
-        return 'pending';
-      case 'cancelled':
-      case 'refunded':
-      case 'chargeback':
-      case 'expired':
-      case 'declined':
-      case 'failed':
-      default:
-        return 'failed';
-    }
-  }
-
-  async syncTransactions(): Promise<void> {
     try {
-      const orders = await this.fetchOrders();
-      for (const order of orders) {
-        await this.saveTransaction(order);
-      }
-    } catch (error) {
-      console.error('Erro ao sincronizar transações do FRC:', error);
-      throw error;
-    }
-  }
-
-  async createWebhook(url: string): Promise<void> {
-    try {
-      const response = await fetch(`${this.baseUrl}/v1/webhooks`, {
+      const response = await fetch(`${this.getApiUrl()}/sales/${transactionId}/refund`, {
         method: 'POST',
-        headers: this.headers,
-        body: JSON.stringify({
-          url,
-          events: [
-            'order.created',
-            'order.approved',
-            'order.cancelled',
-            'order.refunded',
-            'order.chargeback',
-            'order.expired',
-            'membership.activated',
-            'membership.cancelled',
-            'membership.expired',
-            'course.access_granted',
-            'course.access_revoked',
-            'commission.paid',
-            'commission.cancelled',
-            'lead.created',
-            'lead.converted',
-          ],
-          active: true,
-          description: 'Webhook para integração com sistema de gestão',
-        }),
+        headers: this.getHeaders()
       });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
+
+      const data = await response.json();
+
+      if (data.success) {
+        await this.updateTransactionStatus(transactionId, 'refunded');
+        return true;
+      }
+
+      return false;
     } catch (error) {
-      console.error('Erro ao criar webhook no FRC:', error);
-      throw error;
+      return this.handleApiError(error);
     }
   }
 
-  async handleWebhook(payload: any): Promise<void> {
-    try {
-      if (payload.event.startsWith('order.')) {
-        const transaction = this.mapOrderToTransaction(payload.data);
-        await this.saveTransaction(transaction);
-      }
-    } catch (error) {
-      console.error('Erro ao processar webhook do FRC:', error);
-      throw error;
-    }
+  validateWebhook(payload: any, signature: string): boolean {
+    this.validateSecretKey();
+    const calculatedSignature = this.calculateSignature(payload);
+    return calculatedSignature === signature;
+  }
+
+  private calculateSignature(payload: any): string {
+    const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    return require('crypto')
+      .createHmac('sha256', this.secretKey!)
+      .update(data)
+      .digest('hex');
+  }
+
+  private generateSignature(): string {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const data = `${this.apiKey}${timestamp}`;
+    return require('crypto')
+      .createHmac('sha256', this.secretKey!)
+      .update(data)
+      .digest('hex');
+  }
+
+  private mapStatus(status: string): Transaction['status'] {
+    const statusMap: Record<string, Transaction['status']> = {
+      'approved': 'completed',
+      'pending': 'pending',
+      'processing': 'processing',
+      'failed': 'failed',
+      'refunded': 'refunded',
+      'partially_refunded': 'refunded',
+      'cancelled': 'cancelled',
+      'expired': 'failed',
+      'chargeback': 'failed',
+      'dispute': 'processing',
+      'waiting_payment': 'pending',
+      'analysis': 'processing'
+    };
+
+    return statusMap[status.toLowerCase()] || 'pending';
   }
 } 

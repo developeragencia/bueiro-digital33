@@ -1,26 +1,61 @@
-import { PaymentPlatformService } from '../PaymentPlatformService';
 import { Transaction } from '../../../types/payment';
+import { BasePlatformService } from './BasePlatformService';
 
-export class HublaService extends PaymentPlatformService {
-  private baseUrl: string;
-  private headers: HeadersInit;
+export class HublaService extends BasePlatformService {
+  private readonly SANDBOX_API_URL = 'https://sandbox.api.hubla.com.br/v1';
+  private readonly PRODUCTION_API_URL = 'https://api.hubla.com.br/v1';
 
-  constructor(apiKey: string, secretKey: string, sandbox: boolean = true) {
-    super();
-    this.baseUrl = sandbox
-      ? 'https://api.sandbox.hubla.com.br'
-      : 'https://api.hubla.com.br';
-    this.headers = {
-      'Content-Type': 'application/json',
-      'X-Api-Key': apiKey,
-      'X-Secret-Key': secretKey,
+  constructor(platformId: string, apiKey: string, secretKey?: string, sandbox: boolean = true) {
+    super(platformId, apiKey, secretKey, sandbox);
+  }
+
+  protected getSandboxApiUrl(): string {
+    return this.SANDBOX_API_URL;
+  }
+
+  protected getProductionApiUrl(): string {
+    return this.PRODUCTION_API_URL;
+  }
+
+  protected getHeaders(): Record<string, string> {
+    return {
+      ...super.getHeaders(),
+      'X-Hubla-Key': this.apiKey,
+      'X-Hubla-Signature': this.generateSignature()
     };
   }
 
-  async fetchOrders(): Promise<Transaction[]> {
+  async processPayment(amount: number, currency: string, customer: Transaction['customer'], metadata?: Record<string, any>): Promise<Transaction> {
+    this.validateApiKey();
+
     try {
-      const response = await fetch(`${this.baseUrl}/v1/sales`, {
-        headers: this.headers,
+      const response = await fetch(`${this.getApiUrl()}/transactions`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          amount,
+          currency,
+          customer: {
+            name: customer.name,
+            email: customer.email,
+            phone: customer.phone,
+            document: customer.document,
+            address: metadata?.address
+          },
+          product: {
+            id: metadata?.productId,
+            name: metadata?.productName,
+            price: amount,
+            quantity: metadata?.quantity || 1
+          },
+          payment: {
+            method: metadata?.paymentMethod || 'credit_card',
+            installments: metadata?.installments || 1,
+            card: metadata?.card
+          },
+          notification_url: metadata?.notificationUrl,
+          ...metadata
+        })
       });
 
       if (!response.ok) {
@@ -28,175 +63,103 @@ export class HublaService extends PaymentPlatformService {
       }
 
       const data = await response.json();
-      return data.sales.map(this.mapOrderToTransaction);
+
+      const transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'> = {
+        platform_id: this.platformId,
+        order_id: data.transaction_id,
+        amount,
+        currency,
+        status: this.mapStatus(data.status),
+        customer,
+        payment_method: data.payment_method,
+        metadata: {
+          ...metadata,
+          hubla_id: data.id,
+          payment_url: data.payment_url,
+          invoice_url: data.invoice_url,
+          boleto_url: data.boleto_url,
+          pix_qrcode: data.pix_qrcode,
+          pix_code: data.pix_code,
+          installments: data.installments,
+          installment_amount: data.installment_amount,
+          affiliate: data.affiliate,
+          commission: data.commission,
+          producer: data.producer,
+          producer_commission: data.producer_commission
+        }
+      };
+
+      return this.saveTransaction(transaction);
     } catch (error) {
-      console.error('Erro ao buscar vendas do Hubla:', error);
-      throw error;
+      return this.handleApiError(error);
     }
   }
 
-  private mapOrderToTransaction(sale: any): Transaction {
-    return {
-      id: sale.id.toString(),
-      platformId: 'hubla',
-      orderId: sale.reference_id,
-      amount: sale.amount,
-      currency: sale.currency || 'BRL',
-      status: this.mapStatus(sale.status),
-      customer: {
-        name: sale.customer.name,
-        email: sale.customer.email,
-        phone: sale.customer.phone,
-        document: sale.customer.document,
-      },
-      product: {
-        id: sale.product.id,
-        name: sale.product.name,
-        price: sale.product.price,
-        quantity: sale.product.quantity,
-      },
-      paymentMethod: sale.payment_method,
-      createdAt: new Date(sale.created_at),
-      updatedAt: new Date(sale.updated_at),
-      metadata: {
-        payment: {
-          installments: sale.payment_details.installments,
-          installmentAmount: sale.payment_details.installment_amount,
-          paymentLink: sale.payment_details.payment_link,
-          pixQrCode: sale.payment_details.pix_qr_code,
-          pixKey: sale.payment_details.pix_key,
-          boletoUrl: sale.payment_details.boleto_url,
-          boletoBarcode: sale.payment_details.boleto_barcode,
-          cardBrand: sale.payment_details.card_brand,
-          cardLastFour: sale.payment_details.card_last_four,
-        },
-        customer: {
-          address: sale.customer.address,
-          city: sale.customer.city,
-          state: sale.customer.state,
-          zipcode: sale.customer.zipcode,
-          country: sale.customer.country,
-        },
-        producer: {
-          id: sale.producer?.id,
-          name: sale.producer?.name,
-          commission: sale.producer?.commission,
-          commissionAmount: sale.producer?.commission_amount,
-        },
-        affiliate: {
-          id: sale.affiliate?.id,
-          name: sale.affiliate?.name,
-          commission: sale.affiliate?.commission,
-          commissionAmount: sale.affiliate?.commission_amount,
-          level: sale.affiliate?.level,
-          parentId: sale.affiliate?.parent_id,
-        },
-        course: {
-          id: sale.course?.id,
-          name: sale.course?.name,
-          type: sale.course?.type,
-          platform: sale.course?.platform,
-          accessDuration: sale.course?.access_duration,
-        },
-        membership: {
-          id: sale.membership?.id,
-          name: sale.membership?.name,
-          type: sale.membership?.type,
-          period: sale.membership?.period,
-          startDate: sale.membership?.start_date,
-          endDate: sale.membership?.end_date,
-        },
-        funnel: {
-          id: sale.funnel?.id,
-          name: sale.funnel?.name,
-          step: sale.funnel?.step,
-          source: sale.funnel?.source,
-          medium: sale.funnel?.medium,
-          campaign: sale.funnel?.campaign,
-        },
-      },
-    };
-  }
+  async processRefund(transactionId: string): Promise<boolean> {
+    this.validateApiKey();
 
-  private mapStatus(status: string): 'completed' | 'pending' | 'failed' {
-    switch (status.toLowerCase()) {
-      case 'approved':
-      case 'paid':
-      case 'completed':
-        return 'completed';
-      case 'pending':
-      case 'waiting_payment':
-      case 'processing':
-      case 'in_analysis':
-        return 'pending';
-      case 'cancelled':
-      case 'refunded':
-      case 'chargeback':
-      case 'expired':
-      case 'declined':
-      case 'failed':
-      default:
-        return 'failed';
-    }
-  }
-
-  async syncTransactions(): Promise<void> {
     try {
-      const sales = await this.fetchOrders();
-      for (const sale of sales) {
-        await this.saveTransaction(sale);
-      }
-    } catch (error) {
-      console.error('Erro ao sincronizar transações do Hubla:', error);
-      throw error;
-    }
-  }
-
-  async createWebhook(url: string): Promise<void> {
-    try {
-      const response = await fetch(`${this.baseUrl}/v1/webhooks`, {
+      const response = await fetch(`${this.getApiUrl()}/transactions/${transactionId}/refund`, {
         method: 'POST',
-        headers: this.headers,
-        body: JSON.stringify({
-          url,
-          events: [
-            'sale.created',
-            'sale.approved',
-            'sale.cancelled',
-            'sale.refunded',
-            'sale.chargeback',
-            'sale.expired',
-            'membership.activated',
-            'membership.cancelled',
-            'membership.expired',
-            'course.access_granted',
-            'course.access_revoked',
-            'commission.paid',
-            'commission.cancelled',
-          ],
-          active: true,
-          description: 'Webhook para integração com sistema de gestão',
-        }),
+        headers: this.getHeaders()
       });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
+
+      const data = await response.json();
+
+      if (data.success) {
+        await this.updateTransactionStatus(transactionId, 'refunded');
+        return true;
+      }
+
+      return false;
     } catch (error) {
-      console.error('Erro ao criar webhook no Hubla:', error);
-      throw error;
+      return this.handleApiError(error);
     }
   }
 
-  async handleWebhook(payload: any): Promise<void> {
-    try {
-      if (payload.event.startsWith('sale.')) {
-        const transaction = this.mapOrderToTransaction(payload.data);
-        await this.saveTransaction(transaction);
-      }
-    } catch (error) {
-      console.error('Erro ao processar webhook do Hubla:', error);
-      throw error;
-    }
+  validateWebhook(payload: any, signature: string): boolean {
+    this.validateSecretKey();
+    const calculatedSignature = this.calculateSignature(payload);
+    return calculatedSignature === signature;
+  }
+
+  private calculateSignature(payload: any): string {
+    const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    return require('crypto')
+      .createHmac('sha256', this.secretKey!)
+      .update(data)
+      .digest('hex');
+  }
+
+  private generateSignature(): string {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const data = `${this.apiKey}${timestamp}`;
+    return require('crypto')
+      .createHmac('sha256', this.secretKey!)
+      .update(data)
+      .digest('hex');
+  }
+
+  private mapStatus(status: string): Transaction['status'] {
+    const statusMap: Record<string, Transaction['status']> = {
+      'approved': 'completed',
+      'pending': 'pending',
+      'processing': 'processing',
+      'failed': 'failed',
+      'refunded': 'refunded',
+      'partially_refunded': 'refunded',
+      'cancelled': 'cancelled',
+      'expired': 'failed',
+      'chargeback': 'failed',
+      'dispute': 'processing',
+      'waiting_payment': 'pending',
+      'analysis': 'processing'
+    };
+
+    return statusMap[status.toLowerCase()] || 'pending';
   }
 } 

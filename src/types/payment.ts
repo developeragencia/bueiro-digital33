@@ -1,37 +1,74 @@
-export type PaymentPlatformType = 
-  | 'shopify'
-  | 'systeme'
-  | 'strivpay'
+export type PaymentPlatformType =
   | 'appmax'
-  | 'pepper'
+  | 'cartpanda'
+  | 'clickbank'
+  | 'digistore24'
+  | 'doppus'
+  | 'fortpay'
+  | 'frc'
+  | 'hubla'
+  | 'kiwify'
   | 'logzz'
   | 'maxweb'
-  | 'digistore24'
-  | 'fortpay'
-  | 'clickbank'
-  | 'cartpanda'
-  | 'doppus'
-  | 'nitro'
   | 'mundpay'
+  | 'nitro'
   | 'pagtrust'
-  | 'hubla'
-  | 'ticto'
-  | 'kiwify'
-  | 'frc';
+  | 'pepper'
+  | 'shopify'
+  | 'strivpay'
+  | 'systeme'
+  | 'ticto';
+
+export interface PlatformSettings {
+  apiKey: string;
+  secretKey?: string;
+  sandbox?: boolean;
+  clientId?: string;
+  clientSecret?: string;
+  webhookUrl?: string;
+  redirectUrl?: string;
+  notificationUrl?: string;
+  customFields?: Record<string, any>;
+}
 
 export interface PaymentPlatform {
   id: string;
+  user_id: string;
   platform: PaymentPlatformType;
   name: string;
+  description?: string;
   is_active: boolean;
-  client_id: string;
-  client_secret: string;
-  webhook_url: string;
-  webhook_secret: string;
-  user_id: string;
+  settings: PlatformSettings;
   created_at: string;
   updated_at: string;
 }
+
+export interface Transaction {
+  id?: string;
+  order_id: string;
+  platform_id: string;
+  platform_type: PaymentPlatformType;
+  platform_settings: {
+    apiKey: string;
+    secretKey: string;
+    sandbox?: boolean;
+  };
+  amount: number;
+  currency: string;
+  status: TransactionStatus;
+  payment_method: string;
+  customer: {
+    name: string;
+    email: string;
+    phone?: string;
+    document?: string;
+  };
+  metadata?: Record<string, any>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type TransactionStatus = 'pending' | 'approved' | 'declined' | 'refunded' | 'chargeback';
 
 export interface PlatformStatusData {
   is_active: boolean;
@@ -41,67 +78,30 @@ export interface PlatformStatusData {
   errors: number;
 }
 
-export interface PlatformSettings {
-  client_id: string;
-  client_secret: string;
-  webhook_url: string;
-  webhook_secret: string;
-}
-
-export interface Transaction {
+export interface AvailablePlatform {
   id: string;
-  platform_id: string;
-  order_id: string;
-  status: string;
-  amount: number;
-  currency: string;
-  payment_method: string;
-  customer: {
-    name: string;
-    email: string;
-    phone?: string;
-    document?: string;
-  };
-  metadata: Record<string, any>;
-  user_id: string;
-  created_at: string;
-  updated_at: string;
+  name: string;
+  platform: PaymentPlatformType;
+  logo: string;
+  description?: string;
 }
 
 export interface PlatformConfig {
-  id: string;
-  name: PaymentPlatformType;
   apiKey: string;
-  enabled: boolean;
-  sandbox: boolean;
+  secretKey?: string;
+  sandbox?: boolean;
+  clientId?: string;
+  clientSecret?: string;
 }
 
 export interface PlatformIntegration {
   id: string;
-  name: string;
-  description: string;
-  enabled: boolean;
+  platform_id: string;
+  user_id: string;
   settings: PlatformSettings;
-}
-
-export interface AvailablePlatform {
-  id: string;
-  name: string;
-  description: string;
-  enabled: boolean;
-  settings: PlatformSettings;
-}
-
-export interface PaymentPlatformConfig {
-  id: string;
-  name: PaymentPlatformType;
-  apiKey: string;
-  secretKey?: string;
-  merchantId?: string;
-  enabled: boolean;
-  webhookUrl?: string;
-  sandbox: boolean;
-  additionalConfig?: Record<string, string>;
+  status: PlatformStatusData;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PaymentPlatformStats {
