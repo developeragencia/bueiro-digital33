@@ -14,7 +14,7 @@ export function AuthForm({ type }: AuthFormProps) {
   const [loading, setLoading] = useState(false);
   
   const navigate = useNavigate();
-  const { login, register } = useAuth();
+  const { signIn, register } = useAuth();
   const toast = useToast();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -23,11 +23,11 @@ export function AuthForm({ type }: AuthFormProps) {
 
     try {
       if (type === 'login') {
-        await login(email, password);
+        await signIn(email, password);
         toast.success('Login realizado com sucesso!');
         navigate('/dashboard');
       } else {
-        await register(email, password, name);
+        await register(email, password);
         toast.success('Cadastro realizado com sucesso!');
         navigate('/login');
       }

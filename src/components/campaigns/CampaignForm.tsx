@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useToast } from '../../lib/hooks/use-toast';
 import { campaignService } from '../../services/campaigns';
 import { Campaign } from '../../types/supabase';
+import { useAuth } from '../../hooks/useAuth';
 
 interface CampaignFormProps {
   campaign?: Campaign;
@@ -10,9 +11,15 @@ interface CampaignFormProps {
 }
 
 export function CampaignForm({ campaign, onSubmit }: CampaignFormProps) {
+  const { user } = useAuth();
   const [name, setName] = useState(campaign?.name || '');
   const [description, setDescription] = useState(campaign?.description || '');
   const [status, setStatus] = useState<'active' | 'inactive' | 'archived'>(campaign?.status || 'active');
+  const [startDate, setStartDate] = useState(campaign?.start_date || '');
+  const [endDate, setEndDate] = useState(campaign?.end_date || '');
+  const [budget, setBudget] = useState(campaign?.budget?.toString() || '');
+  const [targetAudience, setTargetAudience] = useState(campaign?.target_audience || '');
+  const [objectives, setObjectives] = useState(campaign?.objectives || '');
   const [loading, setLoading] = useState(false);
 
   const navigate = useNavigate();
@@ -27,6 +34,12 @@ export function CampaignForm({ campaign, onSubmit }: CampaignFormProps) {
         name,
         description,
         status,
+        start_date: startDate || null,
+        end_date: endDate || null,
+        budget: budget ? parseFloat(budget) : null,
+        target_audience: targetAudience || null,
+        objectives: objectives || null,
+        user_id: user?.id || ''
       };
 
       let result;
@@ -79,6 +92,85 @@ export function CampaignForm({ campaign, onSubmit }: CampaignFormProps) {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
+            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+        <div>
+          <label htmlFor="startDate" className="block text-sm font-medium text-gray-700">
+            Data de Início
+          </label>
+          <div className="mt-1">
+            <input
+              type="date"
+              id="startDate"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label htmlFor="endDate" className="block text-sm font-medium text-gray-700">
+            Data de Término
+          </label>
+          <div className="mt-1">
+            <input
+              type="date"
+              id="endDate"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label htmlFor="budget" className="block text-sm font-medium text-gray-700">
+          Orçamento
+        </label>
+        <div className="mt-1">
+          <input
+            type="number"
+            id="budget"
+            value={budget}
+            onChange={(e) => setBudget(e.target.value)}
+            step="0.01"
+            min="0"
+            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label htmlFor="targetAudience" className="block text-sm font-medium text-gray-700">
+          Público-alvo
+        </label>
+        <div className="mt-1">
+          <textarea
+            id="targetAudience"
+            value={targetAudience}
+            onChange={(e) => setTargetAudience(e.target.value)}
+            rows={2}
+            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label htmlFor="objectives" className="block text-sm font-medium text-gray-700">
+          Objetivos
+        </label>
+        <div className="mt-1">
+          <textarea
+            id="objectives"
+            value={objectives}
+            onChange={(e) => setObjectives(e.target.value)}
+            rows={2}
             className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
           />
         </div>

@@ -2,8 +2,6 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 
 export default function AdminSidebar() {
-  const { user } = useAuth();
-
   return (
     <aside className="w-64 bg-white shadow-md">
       <div className="p-4">

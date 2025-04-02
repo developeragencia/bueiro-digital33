@@ -4,7 +4,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { BellIcon, UserCircleIcon } from '@heroicons/react/24/outline';
 
 export default function DashboardNavbar() {
-  const { user, signOut } = useAuth();
+  const { signOut } = useAuth();
 
   return (
     <nav className="bg-white shadow">
