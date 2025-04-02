@@ -15,10 +15,10 @@
       "dest": "/index.html"
     }
   ],
-  "env": {
-    "VITE_SUPABASE_URL": "@vite-supabase-url",
-    "VITE_SUPABASE_ANON_KEY": "@vite-supabase-anon-key",
+  "buildEnvironment": {
+    "VITE_SUPABASE_URL": "https://xyzcompany.supabase.co",
+    "VITE_SUPABASE_ANON_KEY": "sua_chave_anonima_do_supabase",
     "VITE_APP_NAME": "Bueiro Digital",
-    "VITE_APP_URL": "@vite-app-url"
+    "VITE_APP_URL": "https://bueiro-digital.vercel.app"
   }
 } 
