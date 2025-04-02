@@ -1,137 +1,154 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-
-export interface AuthUser {
-  id: string;
-  email: string;
-  name: string;
-  role: 'admin' | 'user';
-  created_at: string;
-  updated_at: string;
-}
+import { User } from '../types/supabase';
+import { useToast } from '../lib/hooks/use-toast';
 
 export interface AuthContextType {
-  user: AuthUser | null;
-  isInitialized: boolean;
-  isSigningIn: boolean;
-  isSigningUp: boolean;
-  isSigningOut: boolean;
-  isUpdating: boolean;
+  user: User | null;
+  isAdmin: boolean;
+  isAuthenticated: boolean;
+  loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, name: string) => Promise<void>;
+  register: (name: string, email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
-  updateProfile: (data: Partial<AuthUser>) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [isSigningIn, setIsSigningIn] = useState(false);
-  const [isSigningUp, setIsSigningUp] = useState(false);
-  const [isSigningOut, setIsSigningOut] = useState(false);
-  const [isUpdating, setIsUpdating] = useState(false);
+interface AuthProviderProps {
+  children: ReactNode;
+}
+
+export function AuthProvider({ children }: AuthProviderProps) {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+  const toast = useToast();
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_, session) => {
-      if (session?.user) {
-        const { data: profile } = await supabase
-          .from('profiles')
+    checkUser();
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN') {
+        const { data: userData } = await supabase
+          .from('users')
           .select('*')
-          .eq('id', session.user.id)
+          .eq('id', session?.user?.id)
           .single();
-
-        setUser(profile);
-      } else {
+        setUser(userData);
+        setLoading(false);
+      } else if (event === 'SIGNED_OUT') {
         setUser(null);
+        setLoading(false);
       }
-      setIsInitialized(true);
     });
 
     return () => {
-      subscription.unsubscribe();
+      authListener?.subscription.unsubscribe();
     };
   }, []);
 
-  const login = async (email: string, password: string) => {
+  async function checkUser() {
     try {
-      setIsSigningIn(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data: userData } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+        setUser(userData);
+      }
+    } catch (error) {
+      console.error('Error checking user:', error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function login(email: string, password: string) {
+    try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
-      if (error) throw error;
-      return data;
-    } finally {
-      setIsSigningIn(false);
-    }
-  };
 
-  const register = async (email: string, password: string, name: string) => {
+      if (error) throw error;
+
+      if (data.user) {
+        const { data: userData } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', data.user.id)
+          .single();
+        setUser(userData);
+        navigate('/dashboard');
+        toast.success('Login realizado com sucesso!');
+      }
+    } catch (error) {
+      console.error('Error logging in:', error);
+      toast.error('Erro ao fazer login. Verifique suas credenciais.');
+    }
+  }
+
+  async function register(name: string, email: string, password: string) {
     try {
-      setIsSigningUp(true);
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
       });
+
       if (error) throw error;
 
       if (data.user) {
-        await supabase.from('profiles').upsert({
-          id: data.user.id,
-          name,
-          email,
-        });
+        const { error: profileError } = await supabase
+          .from('users')
+          .insert([
+            {
+              id: data.user.id,
+              name,
+              email,
+              role: 'user',
+            },
+          ]);
+
+        if (profileError) throw profileError;
+
+        toast.success('Registro realizado com sucesso! Faça login para continuar.');
+        navigate('/login');
       }
-
-      return data;
-    } finally {
-      setIsSigningUp(false);
+    } catch (error) {
+      console.error('Error registering:', error);
+      toast.error('Erro ao criar conta. Tente novamente.');
     }
-  };
+  }
 
-  const signOut = async () => {
+  async function signOut() {
     try {
-      setIsSigningOut(true);
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-    } finally {
-      setIsSigningOut(false);
+      setUser(null);
+      navigate('/login');
+      toast.success('Logout realizado com sucesso!');
+    } catch (error) {
+      console.error('Error signing out:', error);
+      toast.error('Erro ao fazer logout.');
     }
-  };
+  }
 
-  const updateProfile = async (data: Partial<AuthUser>) => {
-    try {
-      setIsUpdating(true);
-      const { error } = await supabase
-        .from('profiles')
-        .update(data)
-        .eq('id', user?.id);
-      if (error) throw error;
-
-      setUser(prev => prev ? { ...prev, ...data } : null);
-    } finally {
-      setIsUpdating(false);
-    }
+  const value = {
+    user,
+    isAdmin: user?.role === 'admin',
+    isAuthenticated: !!user,
+    loading,
+    login,
+    register,
+    signOut,
   };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isInitialized,
-        isSigningIn,
-        isSigningUp,
-        isSigningOut,
-        isUpdating,
-        login,
-        register,
-        signOut,
-        updateProfile,
-      }}
-    >
-      {children}
+    <AuthContext.Provider value={value}>
+      {!loading && children}
     </AuthContext.Provider>
   );
 }

@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { AnalyticsService } from '../../services/analytics';
-import { CampaignService } from '../../services/campaigns';
+import { useEffect, useState } from 'react';
+import { analyticsService } from '../../services/analytics';
+import { campaignService } from '../../services/campaigns';
 import { Campaign } from '../../types/supabase';
 import toast from 'react-hot-toast';
 
@@ -34,22 +34,27 @@ export function AnalyticsDashboard() {
 
   const loadCampaigns = async () => {
     try {
-      const data = await CampaignService.getCampaigns();
+      const data = await campaignService.getCampaigns();
       setCampaigns(data);
+      if (data.length > 0) {
+        setSelectedCampaign(data[0].id);
+      }
     } catch (error) {
       toast.error('Erro ao carregar campanhas');
-      console.error(error);
+      console.error('Error loading campaigns:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const loadAnalytics = async () => {
     try {
       setIsLoading(true);
-      const data = await AnalyticsService.getAnalytics(selectedCampaign, dateRange);
+      const data = await analyticsService.getCampaignStats(selectedCampaign);
       setAnalyticsData(data);
     } catch (error) {
       toast.error('Erro ao carregar analytics');
-      console.error(error);
+      console.error('Error loading stats:', error);
     } finally {
       setIsLoading(false);
     }
@@ -127,7 +132,7 @@ export function AnalyticsDashboard() {
                 <div className="ml-5 w-0 flex-1">
                   <dl>
                     <dt className="text-sm font-medium text-gray-500 truncate">
-                      Total de Visitas
+                      Total de Cliques
                     </dt>
                     <dd className="text-lg font-medium text-gray-900">
                       {analyticsData.totalVisits}

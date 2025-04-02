@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { saveAs } from 'file-saver';
+import { useToast } from '../lib/hooks/use-toast';
 import * as XLSX from 'xlsx';
 
 interface ExportOptions<T> {
@@ -9,8 +9,9 @@ interface ExportOptions<T> {
   dateFields?: (keyof T)[];
 }
 
-export function useExport<T extends Record<string, any>>() {
-  const [isExporting, setIsExporting] = useState(false);
+export function useExport() {
+  const [loading, setLoading] = useState(false);
+  const toast = useToast();
 
   const formatValue = (value: any, isDate: boolean): string => {
     if (value === null || value === undefined) {
@@ -25,42 +26,55 @@ export function useExport<T extends Record<string, any>>() {
     return String(value);
   };
 
-  const exportToCSV = async ({ data, filename, headers = {}, dateFields = [] }: ExportOptions<T>) => {
+  const exportToCSV = async <T extends Record<string, any>>(
+    data: T[],
+    filename: string,
+    headers: { [key in keyof T]?: string } = {}
+  ) => {
     try {
-      setIsExporting(true);
+      setLoading(true);
 
-      const rows = data.map(item => {
-        const row: Record<string, string> = {};
-        
-        Object.keys(item).forEach(key => {
-          const header = headers[key as keyof T] || key;
-          const value = formatValue(item[key], dateFields.includes(key as keyof T));
-          row[header] = value;
-        });
+      if (!data.length) {
+        toast.error('Não há dados para exportar');
+        return;
+      }
 
-        return row;
-      });
+      const headerRow = Object.keys(data[0]).map(key => headers[key] || key);
+      const csvRows = [
+        headerRow.join(','),
+        ...data.map(row =>
+          Object.values(row)
+            .map(value => `"${value}"`)
+            .join(',')
+        ),
+      ];
 
-      const csvContent = rows.map(row => 
-        Object.values(row).map(value => 
-          `"${value.replace(/"/g, '""')}"`
-        ).join(',')
-      ).join('\n');
-
+      const csvContent = csvRows.join('\n');
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      saveAs(blob, `${filename}.csv`);
+      const link = document.createElement('a');
 
+      if (navigator.msSaveBlob) {
+        navigator.msSaveBlob(blob, filename);
+      } else {
+        link.href = URL.createObjectURL(blob);
+        link.setAttribute('download', `${filename}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      toast.success('Arquivo exportado com sucesso!');
     } catch (error) {
       console.error('Error exporting to CSV:', error);
-      throw error;
+      toast.error('Erro ao exportar arquivo');
     } finally {
-      setIsExporting(false);
+      setLoading(false);
     }
   };
 
   const exportToExcel = async ({ data, filename, headers = {}, dateFields = [] }: ExportOptions<T>) => {
     try {
-      setIsExporting(true);
+      setLoading(true);
 
       const rows = data.map(item => {
         const row: Record<string, string> = {};
@@ -83,12 +97,12 @@ export function useExport<T extends Record<string, any>>() {
       console.error('Error exporting to Excel:', error);
       throw error;
     } finally {
-      setIsExporting(false);
+      setLoading(false);
     }
   };
 
   return {
-    isExporting,
+    loading,
     exportToCSV,
     exportToExcel
   };

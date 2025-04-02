@@ -1,43 +1,43 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { campaignService } from '../../services/campaigns';
-import { Campaign } from '../../types/supabase';
+import { linkService } from '../../services/links';
+import { Link } from '../../types/supabase';
 import { useToast } from '../../lib/hooks/use-toast';
 
-export function CampaignList() {
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+export function LinkList() {
+  const [links, setLinks] = useState<Link[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const toast = useToast();
 
   useEffect(() => {
-    loadCampaigns();
+    loadLinks();
   }, []);
 
-  const loadCampaigns = async () => {
+  const loadLinks = async () => {
     try {
-      const data = await campaignService.getCampaigns();
-      setCampaigns(data);
+      const data = await linkService.getLinks();
+      setLinks(data);
     } catch (error) {
-      console.error('Error loading campaigns:', error);
-      toast.error('Erro ao carregar campanhas');
+      console.error('Error loading links:', error);
+      toast.error('Erro ao carregar links');
     } finally {
       setLoading(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Tem certeza que deseja excluir esta campanha?')) {
+    if (!window.confirm('Tem certeza que deseja excluir este link?')) {
       return;
     }
 
     try {
-      await campaignService.delete(id);
-      toast.success('Campanha excluída com sucesso!');
-      loadCampaigns();
+      await linkService.delete(id);
+      toast.success('Link excluído com sucesso!');
+      loadLinks();
     } catch (error) {
-      console.error('Error deleting campaign:', error);
-      toast.error('Erro ao excluir campanha');
+      console.error('Error deleting link:', error);
+      toast.error('Erro ao excluir link');
     }
   };
 
@@ -53,17 +53,17 @@ export function CampaignList() {
     <div className="px-4 sm:px-6 lg:px-8">
       <div className="sm:flex sm:items-center">
         <div className="sm:flex-auto">
-          <h1 className="text-2xl font-semibold text-gray-900">Campanhas</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">Links</h1>
           <p className="mt-2 text-sm text-gray-700">
-            Lista de todas as campanhas criadas
+            Lista de todos os links criados
           </p>
         </div>
         <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none">
           <button
-            onClick={() => navigate('/campaigns/new')}
+            onClick={() => navigate('/links/new')}
             className="inline-flex items-center justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 sm:w-auto"
           >
-            Nova Campanha
+            Novo Link
           </button>
         </div>
       </div>
@@ -78,25 +78,25 @@ export function CampaignList() {
                       scope="col"
                       className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6"
                     >
-                      Nome
+                      URL Original
                     </th>
                     <th
                       scope="col"
                       className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900"
                     >
-                      Status
+                      URL Encurtada
                     </th>
                     <th
                       scope="col"
                       className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900"
                     >
-                      Data de Início
+                      Cliques
                     </th>
                     <th
                       scope="col"
                       className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900"
                     >
-                      Data de Término
+                      Data de Criação
                     </th>
                     <th
                       scope="col"
@@ -107,47 +107,43 @@ export function CampaignList() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 bg-white">
-                  {campaigns.map((campaign) => (
-                    <tr key={campaign.id}>
+                  {links.map((link) => (
+                    <tr key={link.id}>
                       <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900 sm:pl-6">
-                        {campaign.name}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                        <span
-                          className={`inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${
-                            campaign.status === 'active'
-                              ? 'bg-green-100 text-green-800'
-                              : campaign.status === 'inactive'
-                              ? 'bg-yellow-100 text-yellow-800'
-                              : 'bg-red-100 text-red-800'
-                          }`}
+                        <a
+                          href={link.original_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-indigo-600 hover:text-indigo-900"
                         >
-                          {campaign.status === 'active'
-                            ? 'Ativa'
-                            : campaign.status === 'inactive'
-                            ? 'Inativa'
-                            : 'Arquivada'}
-                        </span>
+                          {link.original_url}
+                        </a>
                       </td>
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                        {campaign.start_date
-                          ? new Date(campaign.start_date).toLocaleDateString()
-                          : '-'}
+                        <a
+                          href={link.short_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-indigo-600 hover:text-indigo-900"
+                        >
+                          {link.short_url}
+                        </a>
                       </td>
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                        {campaign.end_date
-                          ? new Date(campaign.end_date).toLocaleDateString()
-                          : '-'}
+                        {link.clicks || 0}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                        {new Date(link.created_at).toLocaleDateString()}
                       </td>
                       <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
                         <button
-                          onClick={() => navigate(`/campaigns/${campaign.id}`)}
+                          onClick={() => navigate(`/links/${link.id}`)}
                           className="text-indigo-600 hover:text-indigo-900 mr-4"
                         >
                           Editar
                         </button>
                         <button
-                          onClick={() => handleDelete(campaign.id)}
+                          onClick={() => handleDelete(link.id)}
                           className="text-red-600 hover:text-red-900"
                         >
                           Excluir
