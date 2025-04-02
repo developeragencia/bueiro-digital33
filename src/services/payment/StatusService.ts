@@ -1,5 +1,5 @@
 import { supabase } from '../../lib/supabase';
-import { PlatformStatus } from '../../types/payment';
+import { PlatformStatusData } from '../../types/payment';
 
 interface StatusData {
   id: string;
@@ -14,10 +14,12 @@ interface StatusData {
 }
 
 class StatusService {
+  private table = 'platform_status';
+
   async createStatus(status: Omit<StatusData, 'id' | 'created_at' | 'updated_at'>) {
     try {
       const { data, error } = await supabase
-        .from('platform_status')
+        .from(this.table)
         .insert([status])
         .select()
         .single();
@@ -33,7 +35,7 @@ class StatusService {
   async updateStatus(id: string, status: Partial<StatusData>) {
     try {
       const { data, error } = await supabase
-        .from('platform_status')
+        .from(this.table)
         .update(status)
         .eq('id', id)
         .select()
@@ -47,10 +49,10 @@ class StatusService {
     }
   }
 
-  async getStatus(platformId: string): Promise<PlatformStatus> {
+  async getStatus(platformId: string): Promise<PlatformStatusData> {
     try {
       const { data, error } = await supabase
-        .from('platform_status')
+        .from(this.table)
         .select('*')
         .eq('platform_id', platformId)
         .single();
@@ -76,7 +78,7 @@ class StatusService {
       startDate.setDate(startDate.getDate() - days);
 
       const { data, error } = await supabase
-        .from('platform_status')
+        .from(this.table)
         .select('*')
         .eq('platform_id', platformId)
         .gte('created_at', startDate.toISOString())
@@ -90,13 +92,13 @@ class StatusService {
     }
   }
 
-  async checkPlatformStatus(platformId: string): Promise<PlatformStatus> {
+  async checkPlatformStatus(platformId: string): Promise<PlatformStatusData> {
     try {
       const startTime = Date.now();
-      const isActive = await this.checkApiConnection(platformId);
+      const isActive = await this.checkApiHealth(platformId);
       const latency = Date.now() - startTime;
 
-      const status: PlatformStatus = {
+      const status: PlatformStatusData = {
         is_active: isActive,
         last_checked: new Date().toISOString(),
         uptime: isActive ? 100 : 0,
@@ -104,13 +106,7 @@ class StatusService {
         errors: isActive ? 0 : 1
       };
 
-      await this.updateStatus(platformId, {
-        is_active: status.is_active,
-        last_checked: status.last_checked,
-        uptime: status.uptime,
-        latency: status.latency,
-        errors: status.errors
-      });
+      await this.updateStatus(platformId, status);
 
       return status;
     } catch (error) {
@@ -119,24 +115,17 @@ class StatusService {
     }
   }
 
-  private calculateUptime(currentUptime: number, isActive: boolean): number {
-    // Simple uptime calculation - could be made more sophisticated
-    if (isActive) {
-      return currentUptime;
-    }
+  private async checkApiHealth(platformId: string): Promise<boolean> {
+    try {
+      // Simula uma verificação de API com latência aleatória
+      const latency = Math.random() * 1000;
+      await new Promise(resolve => setTimeout(resolve, latency));
 
-    // If platform is down, decrease uptime by 0.1%
-    return Math.max(0, currentUptime - 0.1);
-  }
-
-  private async mockApiHealthCheck(): Promise<void> {
-    // Simulate an API health check with random latency
-    const latency = Math.random() * 1000; // Random latency between 0-1000ms
-    await new Promise(resolve => setTimeout(resolve, latency));
-
-    // Simulate occasional failures
-    if (Math.random() < 0.1) { // 10% chance of failure
-      throw new Error('API health check failed');
+      // Simula falhas ocasionais (10% de chance)
+      return Math.random() > 0.1;
+    } catch (error) {
+      console.error('Error checking API health:', error);
+      return false;
     }
   }
 
@@ -146,7 +135,7 @@ class StatusService {
       cutoffDate.setDate(cutoffDate.getDate() - days);
 
       const { error } = await supabase
-        .from('platform_status')
+        .from(this.table)
         .delete()
         .lt('created_at', cutoffDate.toISOString());
 

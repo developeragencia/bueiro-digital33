@@ -33,7 +33,13 @@ export interface PaymentPlatform {
   updated_at: string;
 }
 
-export type PlatformStatus = 'active' | 'inactive';
+export interface PlatformStatusData {
+  is_active: boolean;
+  last_checked: string;
+  uptime: number;
+  latency: number;
+  errors: number;
+}
 
 export interface PlatformSettings {
   client_id: string;
@@ -56,7 +62,7 @@ export interface Transaction {
     phone?: string;
     document?: string;
   };
-  metadata: any;
+  metadata: Record<string, any>;
   user_id: string;
   created_at: string;
   updated_at: string;
