@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import * as XLSX from 'xlsx';
+import { Workbook } from 'exceljs';
 
 interface ImportOptions<T> {
   headers?: { [key: string]: keyof T };
@@ -133,57 +133,44 @@ export function useImport<T>() {
     [processValue, validateRow]
   );
 
-  const importFromExcel = useCallback(
-    async (file: File, options: ImportOptions<T> = {}): Promise<ImportResult<T>> => {
-      const result: ImportResult<T> = {
-        data: [],
-        errors: [],
-        totalRows: 0,
-        successRows: 0,
-        failedRows: 0,
-      };
+  const importFromExcel = async (file: File): Promise<any[]> => {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = new Workbook();
+      await workbook.xlsx.load(arrayBuffer);
 
-      try {
-        const buffer = await file.arrayBuffer();
-        const workbook = XLSX.read(buffer);
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-        const headers = jsonData[0] as string[];
-        result.totalRows = jsonData.length - 1;
-
-        for (let i = 1; i < jsonData.length; i++) {
-          const row = jsonData[i] as any[];
-          const item: any = {};
-          let hasError = false;
-
-          headers.forEach((header, index) => {
-            const mappedField = options.headers?.[header] || (header as keyof T);
-            const value = processValue(row[index], mappedField, options);
-            item[mappedField] = value;
-          });
-
-          const rowErrors = validateRow(item as T, options);
-          if (rowErrors.length > 0) {
-            result.errors.push(`Linha ${i + 1}: ${rowErrors.join(', ')}`);
-            result.failedRows++;
-            hasError = true;
-          }
-
-          if (!hasError) {
-            result.data.push(item);
-            result.successRows++;
-          }
-        }
-
-        return result;
-      } catch (error) {
-        console.error('Error importing Excel:', error);
-        throw new Error('Erro ao importar arquivo Excel');
+      const worksheet = workbook.getWorksheet(1);
+      if (!worksheet) {
+        throw new Error('Planilha não encontrada');
       }
-    },
-    [processValue, validateRow]
-  );
+
+      const headers: string[] = [];
+      const data: any[] = [];
+
+      // Obter cabeçalhos
+      worksheet.getRow(1).eachCell((cell, colNumber) => {
+        headers[colNumber - 1] = cell.value?.toString() || `Column${colNumber}`;
+      });
+
+      // Obter dados
+      worksheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return; // Pular cabeçalhos
+
+        const rowData: Record<string, any> = {};
+        row.eachCell((cell, colNumber) => {
+          const header = headers[colNumber - 1];
+          rowData[header] = cell.value;
+        });
+
+        data.push(rowData);
+      });
+
+      return data;
+    } catch (error) {
+      console.error('Erro ao importar do Excel:', error);
+      throw error;
+    }
+  };
 
   return {
     importFromCSV,

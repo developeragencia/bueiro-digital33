@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useToast } from '../lib/hooks/use-toast';
-import * as XLSX from 'xlsx';
+import { Workbook } from 'exceljs';
 
 interface ExportOptions<T> {
   data: T[];
@@ -72,32 +72,49 @@ export function useExport() {
     }
   };
 
-  const exportToExcel = async ({ data, filename, headers = {}, dateFields = [] }: ExportOptions<T>) => {
+  const exportToExcel = async (data: any[], fileName: string) => {
     try {
-      setLoading(true);
+      const workbook = new Workbook();
+      const worksheet = workbook.addWorksheet('Sheet1');
 
-      const rows = data.map(item => {
-        const row: Record<string, string> = {};
-        
-        Object.keys(item).forEach(key => {
-          const header = headers[key as keyof T] || key;
-          const value = formatValue(item[key], dateFields.includes(key as keyof T));
-          row[header] = value;
-        });
+      // Adicionar cabeçalhos
+      const headers = Object.keys(data[0]);
+      worksheet.addRow(headers);
 
-        return row;
+      // Adicionar dados
+      data.forEach(item => {
+        const row = headers.map(header => item[header]);
+        worksheet.addRow(row);
       });
 
-      const worksheet = XLSX.utils.json_to_sheet(rows);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
-      XLSX.writeFile(workbook, `${filename}.xlsx`);
+      // Ajustar largura das colunas
+      worksheet.columns.forEach(column => {
+        column.width = 15;
+      });
 
+      // Estilizar cabeçalhos
+      const headerRow = worksheet.getRow(1);
+      headerRow.font = { bold: true };
+      headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E0E0' }
+      };
+
+      // Gerar arquivo
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      
+      // Download
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${fileName}.xlsx`;
+      link.click();
+      window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Error exporting to Excel:', error);
+      console.error('Erro ao exportar para Excel:', error);
       throw error;
-    } finally {
-      setLoading(false);
     }
   };
 
