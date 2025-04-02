@@ -1,113 +1,129 @@
-import { useState } from 'react';
-import { AnalyticsService } from '../services/AnalyticsService';
-import { Database } from '../types/supabase';
-import { useLoading } from './useLoading';
-import { useNotification } from './useNotification';
+import { useState, useEffect } from 'react';
+import { AnalyticsService } from '../services/analytics';
 
-type Analytics = Database['public']['Tables']['analytics']['Row'];
+interface AnalyticsData {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  campaign_id: string;
+  utm_id: string | null;
+  visits: number;
+  unique_visitors: number;
+  bounce_rate: number;
+  average_time: number;
+  conversions: number;
+  revenue: number | null;
+  source: string | null;
+  medium: string | null;
+  user_id: string;
+  visitor_id?: string;
+  time_on_site?: number;
+  is_bounce?: boolean;
+  is_conversion?: boolean;
+}
 
-export interface AnalyticsData {
+interface AnalyticsSummary {
   totalVisits: number;
   uniqueVisitors: number;
   averageTimeOnSite: number;
   bounceRate: number;
   conversionRate: number;
-  topSources: Array<{ source: string; count: number }>;
-  topMediums: Array<{ medium: string; count: number }>;
-  visitsByDate: Array<{ date: string; count: number }>;
+  topSources: { source: string; count: number }[];
+  topMediums: { medium: string; count: number }[];
+  visitsByDate: { date: string; visits: number }[];
 }
 
-export function useAnalytics(campaignId: string, userId: string) {
-  const [data, setData] = useState<AnalyticsData | null>(null);
-  const [rawData, setRawData] = useState<Analytics[]>([]);
-  const notification = useNotification();
+export function useAnalytics(campaignId: string) {
+  const [rawData, setRawData] = useState<AnalyticsData[]>([]);
+  const [summary, setSummary] = useState<AnalyticsSummary>({
+    totalVisits: 0,
+    uniqueVisitors: 0,
+    averageTimeOnSite: 0,
+    bounceRate: 0,
+    conversionRate: 0,
+    topSources: [],
+    topMediums: [],
+    visitsByDate: []
+  });
 
-  const [loadAnalytics, isLoading] = useLoading(AnalyticsService.getByCampaign);
+  useEffect(() => {
+    const loadData = async () => {
+      const result = await AnalyticsService.getByCampaign(campaignId);
+      setRawData(result as AnalyticsData[]);
 
-  const fetchAnalytics = async (startDate?: Date, endDate?: Date) => {
-    try {
-      const result = await loadAnalytics(campaignId, userId, startDate, endDate);
-      setRawData(result);
-
-      // Processa os dados brutos em métricas úteis
-      const processedData: AnalyticsData = {
+      setSummary({
         totalVisits: result.length,
-        uniqueVisitors: new Set(result.map(r => r.visitor_id)).size,
-        averageTimeOnSite: calculateAverageTimeOnSite(result),
-        bounceRate: calculateBounceRate(result),
-        conversionRate: calculateConversionRate(result),
-        topSources: calculateTopSources(result),
-        topMediums: calculateTopMediums(result),
-        visitsByDate: calculateVisitsByDate(result),
-      };
+        uniqueVisitors: new Set(result.map((r: AnalyticsData) => r.visitor_id)).size,
+        averageTimeOnSite: calculateAverageTimeOnSite(result as AnalyticsData[]),
+        bounceRate: calculateBounceRate(result as AnalyticsData[]),
+        conversionRate: calculateConversionRate(result as AnalyticsData[]),
+        topSources: calculateTopSources(result as AnalyticsData[]),
+        topMediums: calculateTopMediums(result as AnalyticsData[]),
+        visitsByDate: calculateVisitsByDate(result as AnalyticsData[])
+      });
+    };
 
-      setData(processedData);
-      return processedData;
-    } catch (error) {
-      notification.error('Erro ao carregar dados de analytics');
-      throw error;
-    }
-  };
+    loadData();
+  }, [campaignId]);
 
-  const calculateAverageTimeOnSite = (analytics: Analytics[]): number => {
-    const times = analytics
-      .filter(a => a.time_on_site)
-      .map(a => a.time_on_site as number);
-    return times.length ? times.reduce((a, b) => a + b, 0) / times.length : 0;
-  };
+  return { rawData, summary };
+}
 
-  const calculateBounceRate = (analytics: Analytics[]): number => {
-    const bounces = analytics.filter(a => a.is_bounce).length;
-    return analytics.length ? (bounces / analytics.length) * 100 : 0;
-  };
+function calculateAverageTimeOnSite(analytics: AnalyticsData[]): number {
+  const times = analytics
+    .filter(a => a.time_on_site)
+    .map(a => a.time_on_site as number);
 
-  const calculateConversionRate = (analytics: Analytics[]): number => {
-    const conversions = analytics.filter(a => a.is_conversion).length;
-    return analytics.length ? (conversions / analytics.length) * 100 : 0;
-  };
+  if (times.length === 0) return 0;
+  return times.reduce((a, b) => a + b, 0) / times.length;
+}
 
-  const calculateTopSources = (analytics: Analytics[]): Array<{ source: string; count: number }> => {
-    const sources = analytics.reduce((acc, curr) => {
-      const source = curr.source || 'unknown';
-      acc[source] = (acc[source] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+function calculateBounceRate(analytics: AnalyticsData[]): number {
+  if (analytics.length === 0) return 0;
+  const bounces = analytics.filter(a => a.is_bounce).length;
+  return (bounces / analytics.length) * 100;
+}
 
-    return Object.entries(sources)
-      .map(([source, count]) => ({ source, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
-  };
+function calculateConversionRate(analytics: AnalyticsData[]): number {
+  if (analytics.length === 0) return 0;
+  const conversions = analytics.filter(a => a.is_conversion).length;
+  return (conversions / analytics.length) * 100;
+}
 
-  const calculateTopMediums = (analytics: Analytics[]): Array<{ medium: string; count: number }> => {
-    const mediums = analytics.reduce((acc, curr) => {
-      const medium = curr.medium || 'unknown';
-      acc[medium] = (acc[medium] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+function calculateTopSources(analytics: AnalyticsData[]): { source: string; count: number }[] {
+  const sources = analytics.reduce((acc, curr) => {
+    if (!curr.source) return acc;
+    acc[curr.source] = (acc[curr.source] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
 
-    return Object.entries(mediums)
-      .map(([medium, count]) => ({ medium, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
-  };
+  return Object.entries(sources)
+    .map(([source, count]) => ({ source, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+}
 
-  const calculateVisitsByDate = (analytics: Analytics[]): Array<{ date: string; count: number }> => {
-    const visits = analytics.reduce((acc, curr) => {
-      const date = new Date(curr.created_at).toISOString().split('T')[0];
-      acc[date] = (acc[date] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+function calculateTopMediums(analytics: AnalyticsData[]): { medium: string; count: number }[] {
+  const mediums = analytics.reduce((acc, curr) => {
+    if (!curr.medium) return acc;
+    acc[curr.medium] = (acc[curr.medium] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
 
-    return Object.entries(visits)
-      .map(([date, count]) => ({ date, count }))
-      .sort((a, b) => a.date.localeCompare(b.date));
-  };
+  return Object.entries(mediums)
+    .map(([medium, count]) => ({ medium, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+}
 
-  return {
-    data,
-    rawData,
-    isLoading,
-    fetchAnalytics,
-  };
+function calculateVisitsByDate(analytics: AnalyticsData[]): { date: string; visits: number }[] {
+  const visitsByDate = analytics.reduce((acc, curr) => {
+    const date = curr.created_at.split('T')[0];
+    acc[date] = (acc[date] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  return Object.entries(visitsByDate)
+    .map(([date, visits]) => ({ date, visits }))
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 } 

@@ -255,11 +255,17 @@ export interface PaymentPlatform {
   created_at: string;
   updated_at: string;
   name: string;
+  platform: string;
+  client_id: string | null;
+  client_secret: string | null;
+  webhook_secret: string | null;
+  webhook_url: string | null;
+  is_active: boolean;
+  user_id: string;
   platform_id: string;
   api_key: string;
   secret_key: string;
-  user_id: string;
-  is_active: boolean;
+  description?: string;
 }
 
 export interface Transaction {
@@ -275,4 +281,34 @@ export interface Transaction {
   status: string;
   payment_method: string;
   user_id: string;
+}
+
+export interface Campaign {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  name: string;
+  description: string | null;
+  status: 'active' | 'inactive' | 'archived';
+  start_date: string | null;
+  end_date: string | null;
+  budget: number | null;
+  target_audience: string | null;
+  objectives: string | null;
+  user_id: string;
+}
+
+export interface Utm {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  name: string;
+  base_url: string;
+  campaign_id: string;
+  source: string;
+  medium: string;
+  term: string | null;
+  content: string | null;
+  user_id: string;
+  campaign_name?: string;
 } 

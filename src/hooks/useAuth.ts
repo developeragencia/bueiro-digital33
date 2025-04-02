@@ -1,72 +1,103 @@
 import { useState, useEffect } from 'react';
-import { AuthService } from '../services/AuthService';
-import { Database } from '../types/supabase';
-import { useLoading } from './useLoading';
-import { useNotification } from './useNotification';
+import { supabase } from '../lib/supabase';
 
-type User = Database['public']['Tables']['users']['Row'];
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export function useAuth() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
-  const notification = useNotification();
-
-  const [signIn, isSigningIn] = useLoading(AuthService.signIn);
-  const [signUp, isSigningUp] = useLoading(AuthService.signUp);
-  const [signOut, isSigningOut] = useLoading(AuthService.signOut);
-  const [updateProfile, isUpdating] = useLoading(AuthService.updateProfile);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isSigningUp, setIsSigningUp] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
-    const initializeAuth = async () => {
-      try {
-        const session = await AuthService.getSession();
-        if (session?.user) {
-          setUser(session.user as User);
-        }
-      } catch (error) {
-        console.error('Erro ao inicializar autenticação:', error);
-      } finally {
-        setIsInitialized(true);
-      }
-    };
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_, session) => {
+      if (session?.user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
 
-    initializeAuth();
-
-    const { data: authListener } = AuthService.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
-        setUser(session?.user as User || null);
-      } else if (event === 'SIGNED_OUT') {
+        setUser(profile);
+      } else {
         setUser(null);
       }
+      setIsInitialized(true);
     });
 
     return () => {
-      authListener.subscription.unsubscribe();
+      subscription.unsubscribe();
     };
   }, []);
 
   const login = async (email: string, password: string) => {
-    const result = await signIn(email, password);
-    notification.success('Login realizado com sucesso!');
-    return result;
+    try {
+      setIsSigningIn(true);
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (error) throw error;
+      return data;
+    } finally {
+      setIsSigningIn(false);
+    }
   };
 
   const register = async (email: string, password: string, name: string) => {
-    const result = await signUp(email, password, name);
-    notification.success('Registro realizado com sucesso!');
-    return result;
+    try {
+      setIsSigningUp(true);
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+      });
+      if (error) throw error;
+
+      if (data.user) {
+        await supabase.from('profiles').upsert({
+          id: data.user.id,
+          name,
+          email,
+        });
+      }
+
+      return data;
+    } finally {
+      setIsSigningUp(false);
+    }
   };
 
-  const logout = async () => {
-    await signOut();
-    notification.success('Logout realizado com sucesso!');
+  const signOut = async () => {
+    try {
+      setIsSigningOut(true);
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+    } finally {
+      setIsSigningOut(false);
+    }
   };
 
-  const updateUserProfile = async (data: Partial<User>) => {
-    if (!user?.id) return;
-    const result = await updateProfile(user.id, data);
-    notification.success('Perfil atualizado com sucesso!');
-    return result;
+  const updateProfile = async (data: Partial<AuthUser>) => {
+    try {
+      setIsUpdating(true);
+      const { error } = await supabase
+        .from('profiles')
+        .update(data)
+        .eq('id', user?.id);
+      if (error) throw error;
+
+      setUser(prev => prev ? { ...prev, ...data } : null);
+    } finally {
+      setIsUpdating(false);
+    }
   };
 
   return {
@@ -78,7 +109,7 @@ export function useAuth() {
     isUpdating,
     login,
     register,
-    logout,
-    updateUserProfile,
+    signOut,
+    updateProfile,
   };
 } 

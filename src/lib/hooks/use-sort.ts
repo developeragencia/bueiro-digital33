@@ -1,54 +1,49 @@
-import { useState, useMemo } from 'react';
+import { useState, useCallback } from 'react';
 
 type SortDirection = 'asc' | 'desc';
 
-interface UseSortProps<T> {
-  data: T[];
-  defaultSortKey?: keyof T;
-  defaultDirection?: SortDirection;
+interface SortConfig<T> {
+  key: keyof T;
+  direction: SortDirection;
 }
 
-interface UseSortReturn<T> {
-  sortedData: T[];
-  sortKey: keyof T | null;
-  sortDirection: SortDirection;
-  setSortKey: (key: keyof T) => void;
-  toggleSortDirection: () => void;
-}
+export function useSort<T extends Record<string, any>>(initialData: T[] = []) {
+  const [data, setData] = useState<T[]>(initialData);
+  const [sortConfig, setSortConfig] = useState<SortConfig<T> | null>(null);
 
-export function useSort<T>({
-  data,
-  defaultSortKey,
-  defaultDirection = 'asc'
-}: UseSortProps<T>): UseSortReturn<T> {
-  const [sortKey, setSortKey] = useState<keyof T | null>(defaultSortKey || null);
-  const [sortDirection, setSortDirection] = useState<SortDirection>(defaultDirection);
-
-  const sortedData = useMemo(() => {
-    if (!sortKey) return data;
-
-    return [...data].sort((a, b) => {
-      const aValue = a[sortKey];
-      const bValue = b[sortKey];
+  const sortData = useCallback((items: T[], key: keyof T, direction: SortDirection): T[] => {
+    return [...items].sort((a, b) => {
+      const aValue = a[key];
+      const bValue = b[key];
 
       if (aValue === bValue) return 0;
-      if (aValue === null) return 1;
-      if (bValue === null) return -1;
+      if (aValue === null || aValue === undefined) return 1;
+      if (bValue === null || bValue === undefined) return -1;
 
       const result = aValue < bValue ? -1 : 1;
-      return sortDirection === 'asc' ? result : -result;
+      return direction === 'asc' ? result : -result;
     });
-  }, [data, sortKey, sortDirection]);
+  }, []);
 
-  const toggleSortDirection = () => {
-    setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-  };
+  const requestSort = useCallback((key: keyof T) => {
+    let direction: SortDirection = 'asc';
+
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+
+    setSortConfig({ key, direction });
+    setData(prev => sortData(prev, key, direction));
+  }, [sortConfig, sortData]);
+
+  const updateData = useCallback((newData: T[]) => {
+    setData(sortConfig ? sortData(newData, sortConfig.key, sortConfig.direction) : newData);
+  }, [sortConfig, sortData]);
 
   return {
-    sortedData,
-    sortKey,
-    sortDirection,
-    setSortKey,
-    toggleSortDirection
+    data,
+    sortConfig,
+    requestSort,
+    updateData
   };
 }
