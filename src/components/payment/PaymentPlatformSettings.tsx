@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { PaymentPlatformService } from '../../services/payment/PaymentPlatformService';
-import { PaymentPlatform } from '../../types/supabase';
-import toast from 'react-hot-toast';
+import { PaymentPlatform, PlatformSettings } from '../../types/payment';
+import { useToast } from '../../lib/hooks/use-toast';
 
 export function PaymentPlatformSettings() {
   const [platforms, setPlatforms] = useState<PaymentPlatform[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const toast = useToast();
 
   useEffect(() => {
     loadPlatforms();
@@ -24,10 +25,16 @@ export function PaymentPlatformSettings() {
     }
   };
 
-  const handleSubmit = async (platform: PaymentPlatform) => {
+  const handleSubmit = async (platform: PaymentPlatform, settings: Partial<PlatformSettings>) => {
     try {
       setIsSubmitting(true);
-      await PaymentPlatformService.updatePlatform(platform.id, platform);
+      await PaymentPlatformService.updatePlatform(platform.id, {
+        ...platform,
+        settings: {
+          ...platform.settings,
+          ...settings
+        }
+      });
       toast.success('Configurações atualizadas com sucesso!');
       loadPlatforms();
     } catch (error) {
@@ -43,7 +50,7 @@ export function PaymentPlatformSettings() {
       setIsSubmitting(true);
       await PaymentPlatformService.updatePlatform(platform.id, {
         ...platform,
-        is_active: !platform.is_active,
+        is_active: !platform.is_active
       });
       toast.success(
         `Plataforma ${platform.is_active ? 'desativada' : 'ativada'} com sucesso!`
@@ -98,9 +105,7 @@ export function PaymentPlatformSettings() {
                   onClick={() => handleToggle(platform)}
                   disabled={isSubmitting}
                   className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
-                    platform.is_active
-                      ? 'bg-indigo-600'
-                      : 'bg-gray-200'
+                    platform.is_active ? 'bg-indigo-600' : 'bg-gray-200'
                   }`}
                 >
                   <span
@@ -123,11 +128,10 @@ export function PaymentPlatformSettings() {
                     <input
                       type="text"
                       id={`${platform.id}-client_id`}
-                      value={platform.client_id || ''}
+                      value={platform.settings.client_id || ''}
                       onChange={(e) =>
-                        handleSubmit({
-                          ...platform,
-                          client_id: e.target.value,
+                        handleSubmit(platform, {
+                          client_id: e.target.value
                         })
                       }
                       className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
@@ -146,34 +150,10 @@ export function PaymentPlatformSettings() {
                     <input
                       type="password"
                       id={`${platform.id}-client_secret`}
-                      value={platform.client_secret || ''}
+                      value={platform.settings.client_secret || ''}
                       onChange={(e) =>
-                        handleSubmit({
-                          ...platform,
-                          client_secret: e.target.value,
-                        })
-                      }
-                      className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                    />
-                  </div>
-                </div>
-
-                <div className="sm:col-span-6">
-                  <label
-                    htmlFor={`${platform.id}-webhook_secret`}
-                    className="block text-sm font-medium text-gray-700"
-                  >
-                    Webhook Secret
-                  </label>
-                  <div className="mt-1">
-                    <input
-                      type="password"
-                      id={`${platform.id}-webhook_secret`}
-                      value={platform.webhook_secret || ''}
-                      onChange={(e) =>
-                        handleSubmit({
-                          ...platform,
-                          webhook_secret: e.target.value,
+                        handleSubmit(platform, {
+                          client_secret: e.target.value
                         })
                       }
                       className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
@@ -192,11 +172,32 @@ export function PaymentPlatformSettings() {
                     <input
                       type="text"
                       id={`${platform.id}-webhook_url`}
-                      value={platform.webhook_url || ''}
+                      value={platform.settings.webhook_url || ''}
                       onChange={(e) =>
-                        handleSubmit({
-                          ...platform,
-                          webhook_url: e.target.value,
+                        handleSubmit(platform, {
+                          webhook_url: e.target.value
+                        })
+                      }
+                      className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div className="sm:col-span-6">
+                  <label
+                    htmlFor={`${platform.id}-webhook_secret`}
+                    className="block text-sm font-medium text-gray-700"
+                  >
+                    Webhook Secret
+                  </label>
+                  <div className="mt-1">
+                    <input
+                      type="password"
+                      id={`${platform.id}-webhook_secret`}
+                      value={platform.settings.webhook_secret || ''}
+                      onChange={(e) =>
+                        handleSubmit(platform, {
+                          webhook_secret: e.target.value
                         })
                       }
                       className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"

@@ -109,22 +109,10 @@ export interface PlatformLimits {
 }
 
 export interface PlatformSettings {
-  features: {
-    webhooks: boolean;
-    refunds: boolean;
-    subscriptions: boolean;
-    split_payments: boolean;
-  };
-  limits: {
-    min_amount: number;
-    max_amount: number;
-    daily_transactions: number;
-    monthly_transactions: number;
-  };
-  currencies: string[];
-  payment_methods: string[];
-  countries: string[];
-  test_mode: boolean;
+  client_id: string;
+  client_secret: string;
+  webhook_url: string;
+  webhook_secret: string;
 }
 
 export interface PlatformMetrics {
@@ -136,13 +124,7 @@ export interface PlatformMetrics {
   chargebackRate: number;
 }
 
-export interface PlatformStatus {
-  is_active: boolean;
-  last_checked: string;
-  uptime: number;
-  latency: number;
-  errors: number;
-}
+export type PlatformStatus = 'active' | 'inactive';
 
 export interface PlatformIntegration {
   platform: AvailablePlatform;

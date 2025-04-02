@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { linkService } from '../../services/links';
-import { Link } from '../../types/supabase';
+import { Link as UTMLink } from '../../types/supabase';
 import { useToast } from '../../lib/hooks/use-toast';
 
 export function LinkList() {
-  const [links, setLinks] = useState<Link[]>([]);
+  const [links, setLinks] = useState<UTMLink[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const toast = useToast();

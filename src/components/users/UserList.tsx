@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { userService } from '../../services/users';
-import { User } from '../../types/supabase';
+import { User } from '../../types/auth';
 import { useToast } from '../../lib/hooks/use-toast';
 
 export function UserList() {
