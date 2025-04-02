@@ -1,14 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'react-hot-toast';
+import { Link } from '../../types/links';
 import { linkService } from '../../services/links';
-import { Link as UTMLink } from '../../types/supabase';
-import { useToast } from '../../lib/hooks/use-toast';
 
 export function LinkList() {
-  const [links, setLinks] = useState<UTMLink[]>([]);
-  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-  const toast = useToast();
+  const [links, setLinks] = useState<Link[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     loadLinks();
@@ -19,29 +18,29 @@ export function LinkList() {
       const data = await linkService.getLinks();
       setLinks(data);
     } catch (error) {
-      console.error('Error loading links:', error);
+      console.error('Erro ao carregar links:', error);
       toast.error('Erro ao carregar links');
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Tem certeza que deseja excluir este link?')) {
-      return;
-    }
-
     try {
       await linkService.delete(id);
       toast.success('Link excluído com sucesso!');
       loadLinks();
     } catch (error) {
-      console.error('Error deleting link:', error);
+      console.error('Erro ao excluir link:', error);
       toast.error('Erro ao excluir link');
     }
   };
 
-  if (loading) {
+  const handleEdit = (id: string) => {
+    navigate(`/links/edit/${id}`);
+  };
+
+  if (isLoading) {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
@@ -53,17 +52,18 @@ export function LinkList() {
     <div className="px-4 sm:px-6 lg:px-8">
       <div className="sm:flex sm:items-center">
         <div className="sm:flex-auto">
-          <h1 className="text-2xl font-semibold text-gray-900">Links</h1>
+          <h1 className="text-xl font-semibold text-gray-900">Links</h1>
           <p className="mt-2 text-sm text-gray-700">
-            Lista de todos os links criados
+            Lista de todos os seus links encurtados
           </p>
         </div>
         <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none">
           <button
+            type="button"
             onClick={() => navigate('/links/new')}
             className="inline-flex items-center justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 sm:w-auto"
           >
-            Novo Link
+            Criar novo link
           </button>
         </div>
       </div>
@@ -76,7 +76,7 @@ export function LinkList() {
                   <tr>
                     <th
                       scope="col"
-                      className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6"
+                      className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900"
                     >
                       URL Original
                     </th>
@@ -94,12 +94,6 @@ export function LinkList() {
                     </th>
                     <th
                       scope="col"
-                      className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900"
-                    >
-                      Data de Criação
-                    </th>
-                    <th
-                      scope="col"
                       className="relative py-3.5 pl-3 pr-4 sm:pr-6"
                     >
                       <span className="sr-only">Ações</span>
@@ -109,35 +103,18 @@ export function LinkList() {
                 <tbody className="divide-y divide-gray-200 bg-white">
                   {links.map((link) => (
                     <tr key={link.id}>
-                      <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900 sm:pl-6">
-                        <a
-                          href={link.original_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-indigo-600 hover:text-indigo-900"
-                        >
-                          {link.original_url}
-                        </a>
+                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                        {link.original_url}
                       </td>
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                        <a
-                          href={link.short_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-indigo-600 hover:text-indigo-900"
-                        >
-                          {link.short_url}
-                        </a>
+                        {link.short_url}
                       </td>
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                        {link.clicks || 0}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                        {new Date(link.created_at).toLocaleDateString()}
+                        {link.clicks}
                       </td>
                       <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
                         <button
-                          onClick={() => navigate(`/links/${link.id}`)}
+                          onClick={() => handleEdit(link.id)}
                           className="text-indigo-600 hover:text-indigo-900 mr-4"
                         >
                           Editar

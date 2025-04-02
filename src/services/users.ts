@@ -104,4 +104,19 @@ export const userService = {
     if (error) throw error;
     return data;
   },
+
+  async list(): Promise<User[]> {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Erro ao listar usuários:', error);
+      throw error;
+    }
+  },
 }; 

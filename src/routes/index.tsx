@@ -1,82 +1,55 @@
-import { createBrowserRouter, Navigate, Outlet } from 'react-router-dom';
-import { useAuth } from '../hooks/useAuth';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { Layout } from '../components/layout/Layout';
-import { Dashboard } from '../pages/dashboard/Dashboard';
-import { Login } from '../pages/Login';
-import { Register } from '../pages/Register';
-import { Settings } from '../pages/Settings';
-import { Profile } from '../pages/Profile';
-import { NotFound } from '../pages/NotFound';
+import Dashboard from '../pages/dashboard/Dashboard';
+import Login from '../pages/auth/Login';
+import Register from '../pages/auth/Register';
+import Settings from '../pages/settings/Settings';
+import Profile from '../pages/Profile';
+import NotFound from '../pages/NotFound';
+import { useAuth } from '../hooks/useAuth';
 
 interface PrivateRouteProps {
   children: React.ReactNode;
 }
 
-function PrivateRoute({ children }: PrivateRouteProps) {
-  const { user } = useAuth();
-
-  if (!user) {
-    return <Navigate to="/login" />;
-  }
-
-  return <>{children}</>;
-}
-
-function AdminRoute({ children }: PrivateRouteProps) {
-  const { user } = useAuth();
-
-  if (!user || user.role !== 'admin') {
-    return <Navigate to="/dashboard" />;
-  }
-
-  return <>{children}</>;
-}
+const PrivateRoute = ({ children }: PrivateRouteProps) => {
+  const { isAuthenticated } = useAuth();
+  return isAuthenticated ? children : <Navigate to="/login" />;
+};
 
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: <Layout />,
+    element: (
+      <PrivateRoute>
+        <Layout />
+      </PrivateRoute>
+    ),
     children: [
       {
         path: '/',
-        element: <Navigate to="/dashboard" />,
-      },
-      {
-        path: '/login',
-        element: <Login />,
-      },
-      {
-        path: '/register',
-        element: <Register />,
-      },
-      {
-        path: '/dashboard',
-        element: (
-          <PrivateRoute>
-            <Dashboard />
-          </PrivateRoute>
-        ),
+        element: <Dashboard />
       },
       {
         path: '/settings',
-        element: (
-          <PrivateRoute>
-            <Settings />
-          </PrivateRoute>
-        ),
+        element: <Settings />
       },
       {
         path: '/profile',
-        element: (
-          <PrivateRoute>
-            <Profile />
-          </PrivateRoute>
-        ),
-      },
-      {
-        path: '*',
-        element: <NotFound />,
-      },
-    ],
+        element: <Profile />
+      }
+    ]
   },
+  {
+    path: '/login',
+    element: <Login />
+  },
+  {
+    path: '/register',
+    element: <Register />
+  },
+  {
+    path: '*',
+    element: <NotFound />
+  }
 ]); 
