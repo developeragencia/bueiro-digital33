@@ -16,9 +16,9 @@
     }
   ],
   "env": {
-    "VITE_SUPABASE_URL": "@supabase-url",
-    "VITE_SUPABASE_ANON_KEY": "@supabase-anon-key",
+    "VITE_SUPABASE_URL": "@vite-supabase-url",
+    "VITE_SUPABASE_ANON_KEY": "@vite-supabase-anon-key",
     "VITE_APP_NAME": "Bueiro Digital",
-    "VITE_APP_URL": "@app-url"
+    "VITE_APP_URL": "@vite-app-url"
   }
 } 
