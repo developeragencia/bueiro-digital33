@@ -89,5 +89,8 @@ export const paymentPlatformService = {
       { id: 'pagtrust', name: 'PagTrust' },
       { id: 'hubla', name: 'Hubla' },
       { id: 'ticto', name: 'Ticto' },
-      { id: 'kiwify', name: 'Kiwify' },
+      { id: 'kiwify', name: 'Kiwify' }
+    ];
+  }
+};
  
