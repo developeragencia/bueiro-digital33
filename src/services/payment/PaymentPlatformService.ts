@@ -4,111 +4,101 @@ import {
   PlatformSettings, 
   PlatformStatus,
   PaymentPlatformType,
-  AvailablePlatform 
+  AvailablePlatform,
+  Transaction
 } from '../../types/payment';
-import { AvailablePlatform, PlatformConfig, PlatformIntegration } from '../../types/payment';
-import { transactionService } from './TransactionService';
+import { Database } from '../../types/supabase';
+
+type PaymentPlatformRow = Database['public']['Tables']['payment_platforms']['Row'];
 
 class PaymentPlatformServiceClass {
-  protected platformId: string;
-  protected transactionService = transactionService;
+  private table = 'payment_platforms';
 
-  constructor() {
-    this.platformId = '';
+  async create(data: Omit<PaymentPlatform, 'id' | 'created_at' | 'updated_at'>): Promise<PaymentPlatform> {
+    const { data: platform, error } = await supabase
+      .from(this.table)
+      .insert([data])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return platform;
   }
 
-  async create(platform: Omit<PaymentPlatform, 'id' | 'created_at' | 'updated_at'>) {
-    try {
-      const { data, error } = await supabase
-        .from('payment_platforms')
-        .insert([platform])
-        .select()
-        .single();
+  async update(id: string, data: Partial<PaymentPlatform>): Promise<PaymentPlatform> {
+    const { data: platform, error } = await supabase
+      .from(this.table)
+      .update(data)
+      .eq('id', id)
+      .select()
+      .single();
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error creating payment platform:', error);
-      throw error;
-    }
+    if (error) throw error;
+    return platform;
   }
 
-  async update(id: string, platform: Partial<PaymentPlatform>) {
-    try {
-      const { data, error } = await supabase
-        .from('payment_platforms')
-        .update(platform)
-        .eq('id', id)
-        .select()
-        .single();
+  async delete(id: string): Promise<void> {
+    const { error } = await supabase
+      .from(this.table)
+      .delete()
+      .eq('id', id);
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error updating payment platform:', error);
-      throw error;
-    }
+    if (error) throw error;
   }
 
-  async delete(id: string) {
-    try {
-      const { error } = await supabase
-        .from('payment_platforms')
-        .delete()
-        .eq('id', id);
+  async getById(id: string): Promise<PaymentPlatform> {
+    const { data: platform, error } = await supabase
+      .from(this.table)
+      .select()
+      .eq('id', id)
+      .single();
 
-      if (error) throw error;
-    } catch (error) {
-      console.error('Error deleting payment platform:', error);
-      throw error;
-    }
+    if (error) throw error;
+    return platform;
   }
 
-  async getById(id: string) {
-    try {
-      const { data, error } = await supabase
-        .from('payment_platforms')
-        .select('*')
-        .eq('id', id)
-        .single();
+  async getByUserId(userId: string): Promise<PaymentPlatform[]> {
+    const { data: platforms, error } = await supabase
+      .from(this.table)
+      .select()
+      .eq('user_id', userId);
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error getting payment platform:', error);
-      throw error;
-    }
+    if (error) throw error;
+    return platforms;
   }
 
-  async getByUserId(userId: string) {
-    try {
-      const { data, error } = await supabase
-        .from('payment_platforms')
-        .select('*')
-        .eq('user_id', userId);
+  async getByPlatform(platform: PaymentPlatformType): Promise<PaymentPlatform[]> {
+    const { data: platforms, error } = await supabase
+      .from(this.table)
+      .select()
+      .eq('platform', platform);
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error getting user payment platforms:', error);
-      throw error;
-    }
+    if (error) throw error;
+    return platforms;
   }
 
-  async validateApiKey(apiKey: string) {
-    try {
-      const { data, error } = await supabase
-        .from('payment_platforms')
-        .select('*')
-        .eq('api_key', apiKey)
-        .single();
+  async toggleActive(id: string): Promise<PaymentPlatform> {
+    const platform = await this.getById(id);
+    return this.update(id, { is_active: !platform.is_active });
+  }
 
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error validating API key:', error);
-      throw error;
-    }
+  async updateSettings(id: string, settings: PlatformSettings): Promise<PaymentPlatform> {
+    return this.update(id, {
+      client_id: settings.client_id,
+      client_secret: settings.client_secret,
+      webhook_url: settings.webhook_url,
+      webhook_secret: settings.webhook_secret
+    });
+  }
+
+  async getTransactions(platformId: string): Promise<Transaction[]> {
+    const { data: transactions, error } = await supabase
+      .from('transactions')
+      .select()
+      .eq('platform_id', platformId);
+
+    if (error) throw error;
+    return transactions;
   }
 
   listAvailablePlatforms(): AvailablePlatform[] {
@@ -235,9 +225,7 @@ class PaymentPlatformServiceClass {
       client_id: '',
       client_secret: '',
       webhook_url: '',
-      webhook_secret: '',
-      api_key: '',
-      api_secret: ''
+      webhook_secret: ''
     };
   }
 
@@ -284,72 +272,6 @@ class PaymentPlatformServiceClass {
       .from('payment_platforms')
       .select('*')
       .order('created_at', { ascending: false });
-
-    if (error) {
-      throw error;
-    }
-
-    return data;
-  }
-
-  async updatePlatform(
-    id: string,
-    platform: Partial<PaymentPlatform>
-  ): Promise<PaymentPlatform> {
-    const { data, error } = await supabase
-      .from('payment_platforms')
-      .update(platform)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) {
-      throw error;
-    }
-
-    return data;
-  }
-
-  async updatePlatformSettings(
-    id: string,
-    settings: Partial<PlatformSettings>
-  ): Promise<PaymentPlatform> {
-    const { data: platform, error: getError } = await supabase
-      .from('payment_platforms')
-      .select('settings')
-      .eq('id', id)
-      .single();
-
-    if (getError) {
-      throw getError;
-    }
-
-    const updatedSettings = {
-      ...platform.settings,
-      ...settings
-    };
-
-    const { data, error } = await supabase
-      .from('payment_platforms')
-      .update({ settings: updatedSettings })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) {
-      throw error;
-    }
-
-    return data;
-  }
-
-  async togglePlatform(id: string, isActive: boolean): Promise<PaymentPlatform> {
-    const { data, error } = await supabase
-      .from('payment_platforms')
-      .update({ is_active: isActive })
-      .eq('id', id)
-      .select()
-      .single();
 
     if (error) {
       throw error;

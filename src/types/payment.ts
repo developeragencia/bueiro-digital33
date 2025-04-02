@@ -19,6 +19,73 @@ export type PaymentPlatformType =
   | 'kiwify'
   | 'frc';
 
+export interface PaymentPlatform {
+  id: string;
+  platform: PaymentPlatformType;
+  name: string;
+  is_active: boolean;
+  client_id: string;
+  client_secret: string;
+  webhook_url: string;
+  webhook_secret: string;
+  user_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type PlatformStatus = 'active' | 'inactive';
+
+export interface PlatformSettings {
+  client_id: string;
+  client_secret: string;
+  webhook_url: string;
+  webhook_secret: string;
+}
+
+export interface Transaction {
+  id: string;
+  platform_id: string;
+  order_id: string;
+  status: string;
+  amount: number;
+  currency: string;
+  payment_method: string;
+  customer: {
+    name: string;
+    email: string;
+    phone?: string;
+    document?: string;
+  };
+  metadata: any;
+  user_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformConfig {
+  id: string;
+  name: PaymentPlatformType;
+  apiKey: string;
+  enabled: boolean;
+  sandbox: boolean;
+}
+
+export interface PlatformIntegration {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  settings: PlatformSettings;
+}
+
+export interface AvailablePlatform {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  settings: PlatformSettings;
+}
+
 export interface PaymentPlatformConfig {
   id: string;
   name: PaymentPlatformType;
@@ -38,42 +105,6 @@ export interface PaymentPlatformStats {
   averageOrderValue: number;
   refundRate: number;
   chargebackRate: number;
-}
-
-export interface Transaction {
-  id: string;
-  user_id: string;
-  platform_id: string;
-  order_id: string;
-  status: string;
-  amount: number;
-  currency: string;
-  payment_method: string;
-  customer: {
-    name: string;
-    email: string;
-    phone?: string;
-    document?: string;
-  };
-  metadata: any;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface AvailablePlatform {
-  id: string;
-  name: string;
-  description: string;
-  logo: string;
-}
-
-export interface PlatformConfig {
-  apiKey?: string;
-  secretKey?: string;
-  clientId?: string;
-  clientSecret?: string;
-  webhookUrl?: string;
-  webhookSecret?: string;
 }
 
 export interface PlatformCredentials {
@@ -108,13 +139,6 @@ export interface PlatformLimits {
   maxConcurrentRequests?: number;
 }
 
-export interface PlatformSettings {
-  client_id: string;
-  client_secret: string;
-  webhook_url: string;
-  webhook_secret: string;
-}
-
 export interface PlatformMetrics {
   totalTransactions: number;
   totalVolume: number;
@@ -122,24 +146,4 @@ export interface PlatformMetrics {
   averageTransactionValue: number;
   refundRate: number;
   chargebackRate: number;
-}
-
-export type PlatformStatus = 'active' | 'inactive';
-
-export interface PaymentPlatform {
-  id: string;
-  name: PaymentPlatformType;
-  description: string;
-  is_active: boolean;
-  settings: PlatformSettings;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface PlatformIntegration {
-  platform: AvailablePlatform;
-  config: PlatformConfig;
-  settings: PlatformSettings;
-  status: PlatformStatus;
-  metrics?: PlatformMetrics;
 } 

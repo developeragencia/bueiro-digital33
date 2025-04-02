@@ -1,47 +1,29 @@
-import { PaymentPlatform, PaymentPlatformConfig } from '../../../types/payment';
-import { ShopifyService } from './ShopifyService';
-import { SystemeService } from './SystemeService';
-import { StrivPayService } from './StrivPayService';
+import { PaymentPlatformType } from '../../../types/payment';
 import { AppmaxService } from './AppmaxService';
-import { PepperService } from './PepperService';
+import { CartPandaService } from './CartPandaService';
+import { ClickBankService } from './ClickBankService';
+import { Digistore24Service } from './Digistore24Service';
+import { DoppusService } from './DoppusService';
+import { FortPayService } from './FortPayService';
+import { FRCService } from './FRCService';
+import { HublaService } from './HublaService';
+import { KiwifyService } from './KiwifyService';
 import { LogzzService } from './LogzzService';
 import { MaxWebService } from './MaxWebService';
-import { Digistore24Service } from './Digistore24Service';
-import { FortPayService } from './FortPayService';
-import { ClickBankService } from './ClickBankService';
-import { CartPandaService } from './CartPandaService';
-import { DoppusService } from './DoppusService';
-import { NitroService } from './NitroService';
 import { MundPayService } from './MundPayService';
+import { NitroService } from './NitroService';
 import { PagTrustService } from './PagTrustService';
-import { HublaService } from './HublaService';
+import { PepperService } from './PepperService';
+import { ShopifyService } from './ShopifyService';
+import { StrivPayService } from './StrivPayService';
+import { SystemeService } from './SystemeService';
 import { TictoService } from './TictoService';
-import { KiwifyService } from './KiwifyService';
-import { FRCService } from './FRCService';
 
-export {
-  ShopifyService,
-  SystemeService,
-  StrivPayService,
-  AppmaxService,
-  PepperService,
-  LogzzService,
-  MaxWebService,
-  Digistore24Service,
-  FortPayService,
-  ClickBankService,
-  CartPandaService,
-  DoppusService,
-  NitroService,
-  MundPayService,
-  PagTrustService,
-  HublaService,
-  TictoService,
-  KiwifyService,
-  FRCService,
-};
-
-export function createPaymentService(platform: PaymentPlatform, config: PaymentPlatformConfig) {
+export function getPlatformService(platform: PaymentPlatformType, config: {
+  apiKey: string;
+  secretKey?: string;
+  sandbox?: boolean;
+}) {
   const { apiKey, secretKey = '', sandbox = true } = config;
 
   switch (platform) {
@@ -84,6 +66,6 @@ export function createPaymentService(platform: PaymentPlatform, config: PaymentP
     case 'frc':
       return new FRCService(apiKey, secretKey, sandbox);
     default:
-      throw new Error(`Plataforma de pagamento não suportada: ${platform}`);
+      throw new Error(`Platform ${platform} not supported`);
   }
 } 
