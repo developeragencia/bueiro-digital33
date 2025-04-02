@@ -248,4 +248,31 @@ export interface Database {
       [_ in never]: never
     }
   }
+}
+
+export interface PaymentPlatform {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  name: string;
+  platform_id: string;
+  api_key: string;
+  secret_key: string;
+  user_id: string;
+  is_active: boolean;
+}
+
+export interface Transaction {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  platform_id: string;
+  order_id: string;
+  customer_id: string;
+  product_id: string;
+  amount: number;
+  currency: string;
+  status: string;
+  payment_method: string;
+  user_id: string;
 } 

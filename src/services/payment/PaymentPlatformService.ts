@@ -1,7 +1,7 @@
 import { supabase } from '../../config/supabase';
-import type { PaymentPlatform } from '../../config/supabase';
+import type { PaymentPlatform, Transaction } from '../../types/supabase';
 
-export const paymentPlatformService = {
+export class PaymentPlatformService {
   async create(platform: Omit<PaymentPlatform, 'id' | 'created_at' | 'updated_at'>) {
     const { data, error } = await supabase
       .from('payment_platforms')
@@ -11,7 +11,7 @@ export const paymentPlatformService = {
 
     if (error) throw error;
     return data;
-  },
+  }
 
   async update(id: string, platform: Partial<PaymentPlatform>) {
     const { data, error } = await supabase
@@ -23,7 +23,7 @@ export const paymentPlatformService = {
 
     if (error) throw error;
     return data;
-  },
+  }
 
   async delete(id: string) {
     const { error } = await supabase
@@ -32,7 +32,7 @@ export const paymentPlatformService = {
       .eq('id', id);
 
     if (error) throw error;
-  },
+  }
 
   async getById(id: string) {
     const { data, error } = await supabase
@@ -43,7 +43,7 @@ export const paymentPlatformService = {
 
     if (error) throw error;
     return data;
-  },
+  }
 
   async getByUserId(userId: string) {
     const { data, error } = await supabase
@@ -53,7 +53,7 @@ export const paymentPlatformService = {
 
     if (error) throw error;
     return data;
-  },
+  }
 
   async validateApiKey(platformId: string, apiKey: string): Promise<boolean> {
     try {
@@ -68,7 +68,18 @@ export const paymentPlatformService = {
       console.error('Erro ao validar API key:', error);
       return false;
     }
-  },
+  }
+
+  async saveTransaction(transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>) {
+    const { data, error } = await supabase
+      .from('transactions')
+      .insert([transaction])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
 
   async listAvailablePlatforms() {
     return [
@@ -92,5 +103,7 @@ export const paymentPlatformService = {
       { id: 'kiwify', name: 'Kiwify' }
     ];
   }
-};
+}
+
+export const paymentPlatformService = new PaymentPlatformService();
  
