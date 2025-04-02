@@ -1,189 +1,194 @@
-import { db } from '../config/firebase';
-import {
-  collection,
-  addDoc,
-  getDocs,
-  query,
-  where,
-  orderBy,
-  Timestamp,
-  startOf,
-  endOf,
-} from 'firebase/firestore';
-
-export interface AnalyticsEvent {
-  id?: string;
-  type: 'pageview' | 'conversion' | 'click' | 'impression';
-  source: string;
-  campaign?: string;
-  url: string;
-  userId?: string;
-  timestamp: Date;
-  metadata?: Record<string, any>;
-}
-
-export interface AnalyticsStats {
-  pageviews: number;
-  conversions: number;
-  clicks: number;
-  impressions: number;
-  conversionRate: number;
-  revenue: number;
-}
+import { supabase } from '../config/supabase';
+import type { Analytics } from '../config/supabase';
 
 export const analyticsService = {
-  trackEvent: async (event: Omit<AnalyticsEvent, 'id' | 'timestamp'>) => {
-    try {
-      await addDoc(collection(db, 'analytics_events'), {
-        ...event,
-        timestamp: Timestamp.now(),
-      });
-    } catch (error) {
-      console.error('Erro ao registrar evento:', error);
-      throw error;
+  async trackClick(campaignId: string) {
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Tenta encontrar um registro existente para hoje
+    const { data: existingRecord } = await supabase
+      .from('analytics')
+      .select('*')
+      .eq('campaign_id', campaignId)
+      .eq('date', today)
+      .single();
+
+    if (existingRecord) {
+      // Atualiza o registro existente
+      const { error } = await supabase
+        .from('analytics')
+        .update({ clicks: existingRecord.clicks + 1 })
+        .eq('id', existingRecord.id);
+
+      if (error) throw error;
+    } else {
+      // Cria um novo registro
+      const { error } = await supabase
+        .from('analytics')
+        .insert([{
+          campaign_id: campaignId,
+          clicks: 1,
+          conversions: 0,
+          revenue: 0,
+          date: today,
+        }]);
+
+      if (error) throw error;
     }
   },
 
-  getStats: async (
-    userId: string,
-    startDate: Date,
-    endDate: Date
-  ): Promise<AnalyticsStats> => {
-    try {
-      const q = query(
-        collection(db, 'analytics_events'),
-        where('userId', '==', userId),
-        where('timestamp', '>=', startDate),
-        where('timestamp', '<=', endDate),
-        orderBy('timestamp', 'desc')
-      );
+  async trackConversion(campaignId: string, revenue: number) {
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Tenta encontrar um registro existente para hoje
+    const { data: existingRecord } = await supabase
+      .from('analytics')
+      .select('*')
+      .eq('campaign_id', campaignId)
+      .eq('date', today)
+      .single();
 
-      const querySnapshot = await getDocs(q);
-      const events = querySnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as AnalyticsEvent[];
+    if (existingRecord) {
+      // Atualiza o registro existente
+      const { error } = await supabase
+        .from('analytics')
+        .update({
+          conversions: existingRecord.conversions + 1,
+          revenue: existingRecord.revenue + revenue,
+        })
+        .eq('id', existingRecord.id);
 
-      const pageviews = events.filter((e) => e.type === 'pageview').length;
-      const conversions = events.filter((e) => e.type === 'conversion').length;
-      const clicks = events.filter((e) => e.type === 'click').length;
-      const impressions = events.filter((e) => e.type === 'impression').length;
-
-      const conversionRate = impressions > 0 ? (conversions / impressions) * 100 : 0;
-      const revenue = events
-        .filter((e) => e.type === 'conversion')
-        .reduce((acc, curr) => acc + (curr.metadata?.value || 0), 0);
-
-      return {
-        pageviews,
-        conversions,
-        clicks,
-        impressions,
-        conversionRate,
+      if (error) throw error;
+    } else {
+      // Cria um novo registro
+      const { error } = await supabase
+        .from('analytics')
+        .insert([{
+          campaign_id: campaignId,
+          clicks: 0,
+          conversions: 1,
         revenue,
-      };
-    } catch (error) {
-      console.error('Erro ao buscar estatísticas:', error);
-      throw error;
+          date: today,
+        }]);
+
+      if (error) throw error;
     }
   },
 
-  getEventsBySource: async (
-    userId: string,
-    startDate: Date,
-    endDate: Date
-  ) => {
-    try {
-      const q = query(
-        collection(db, 'analytics_events'),
-        where('userId', '==', userId),
-        where('timestamp', '>=', startDate),
-        where('timestamp', '<=', endDate),
-        orderBy('timestamp', 'desc')
-      );
+  async getCampaignStats(campaignId: string, startDate?: string, endDate?: string) {
+    let query = supabase
+      .from('analytics')
+      .select('*')
+      .eq('campaign_id', campaignId);
 
-      const querySnapshot = await getDocs(q);
-      const events = querySnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as AnalyticsEvent[];
-
-      const sourceStats = events.reduce((acc, event) => {
-        if (!acc[event.source]) {
-          acc[event.source] = {
-            pageviews: 0,
-            conversions: 0,
-            clicks: 0,
-            impressions: 0,
-          };
-        }
-
-        acc[event.source][event.type] += 1;
-        return acc;
-      }, {} as Record<string, { pageviews: number; conversions: number; clicks: number; impressions: number }>);
-
-      return Object.entries(sourceStats).map(([source, stats]) => ({
-        source,
-        ...stats,
-        conversionRate:
-          stats.impressions > 0
-            ? (stats.conversions / stats.impressions) * 100
-            : 0,
-      }));
-    } catch (error) {
-      console.error('Erro ao buscar eventos por fonte:', error);
-      throw error;
+    if (startDate) {
+      query = query.gte('date', startDate);
     }
+
+    if (endDate) {
+      query = query.lte('date', endDate);
+    }
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    // Calcula as métricas totais
+    const totals = data.reduce((acc, curr) => ({
+      clicks: acc.clicks + curr.clicks,
+      conversions: acc.conversions + curr.conversions,
+      revenue: acc.revenue + curr.revenue,
+    }), { clicks: 0, conversions: 0, revenue: 0 });
+
+    // Calcula a taxa de conversão
+    const conversionRate = totals.clicks > 0 
+      ? (totals.conversions / totals.clicks) * 100 
+      : 0;
+
+    // Calcula o valor médio por conversão
+    const averageOrderValue = totals.conversions > 0 
+      ? totals.revenue / totals.conversions 
+      : 0;
+
+    return {
+      ...totals,
+      conversionRate,
+      averageOrderValue,
+      dailyStats: data,
+    };
   },
 
-  getEventsByCampaign: async (
-    userId: string,
-    startDate: Date,
-    endDate: Date
-  ) => {
-    try {
-      const q = query(
-        collection(db, 'analytics_events'),
-        where('userId', '==', userId),
-        where('timestamp', '>=', startDate),
-        where('timestamp', '<=', endDate),
-        where('campaign', '!=', null),
-        orderBy('timestamp', 'desc')
-      );
+  async getDashboardStats(userId: string, startDate?: string, endDate?: string) {
+    // Primeiro, obtém todas as campanhas do usuário
+    const { data: campaigns, error: campaignsError } = await supabase
+      .from('campaigns')
+      .select('id')
+      .eq('user_id', userId);
 
-      const querySnapshot = await getDocs(q);
-      const events = querySnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as AnalyticsEvent[];
+    if (campaignsError) throw campaignsError;
 
-      const campaignStats = events.reduce((acc, event) => {
-        if (!event.campaign) return acc;
+    const campaignIds = campaigns.map(c => c.id);
 
-        if (!acc[event.campaign]) {
-          acc[event.campaign] = {
-            pageviews: 0,
+    // Obtém as estatísticas para todas as campanhas
+    let query = supabase
+      .from('analytics')
+      .select('*')
+      .in('campaign_id', campaignIds);
+
+    if (startDate) {
+      query = query.gte('date', startDate);
+    }
+
+    if (endDate) {
+      query = query.lte('date', endDate);
+    }
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    // Agrupa os dados por data
+    const dailyStats = data.reduce((acc, curr) => {
+      if (!acc[curr.date]) {
+        acc[curr.date] = {
+          date: curr.date,
+          clicks: 0,
             conversions: 0,
-            clicks: 0,
-            impressions: 0,
+          revenue: 0,
           };
         }
 
-        acc[event.campaign][event.type] += 1;
-        return acc;
-      }, {} as Record<string, { pageviews: number; conversions: number; clicks: number; impressions: number }>);
+      acc[curr.date].clicks += curr.clicks;
+      acc[curr.date].conversions += curr.conversions;
+      acc[curr.date].revenue += curr.revenue;
 
-      return Object.entries(campaignStats).map(([campaign, stats]) => ({
-        campaign,
-        ...stats,
-        conversionRate:
-          stats.impressions > 0
-            ? (stats.conversions / stats.impressions) * 100
-            : 0,
-      }));
-    } catch (error) {
-      console.error('Erro ao buscar eventos por campanha:', error);
-      throw error;
-    }
+        return acc;
+    }, {} as Record<string, Analytics>);
+
+    // Calcula as métricas totais
+    const totals = Object.values(dailyStats).reduce((acc, curr) => ({
+      clicks: acc.clicks + curr.clicks,
+      conversions: acc.conversions + curr.conversions,
+      revenue: acc.revenue + curr.revenue,
+    }), { clicks: 0, conversions: 0, revenue: 0 });
+
+    // Calcula a taxa de conversão
+    const conversionRate = totals.clicks > 0 
+      ? (totals.conversions / totals.clicks) * 100 
+      : 0;
+
+    // Calcula o valor médio por conversão
+    const averageOrderValue = totals.conversions > 0 
+      ? totals.revenue / totals.conversions 
+      : 0;
+
+    return {
+      ...totals,
+      conversionRate,
+      averageOrderValue,
+      dailyStats: Object.values(dailyStats).sort((a, b) => 
+        new Date(a.date).getTime() - new Date(b.date).getTime()
+      ),
+    };
   },
 }; 

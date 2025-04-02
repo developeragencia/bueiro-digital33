@@ -1,128 +1,93 @@
-import { db } from '../../config/firebase';
-import {
-  collection,
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  getDocs,
-  query,
-  where,
-  Timestamp,
-} from 'firebase/firestore';
-import { PaymentPlatformConfig, PaymentPlatformStats, Transaction } from '../../types/payment';
+import { supabase } from '../../config/supabase';
+import type { PaymentPlatform } from '../../config/supabase';
 
-export class PaymentPlatformService {
-  protected collection = 'payment_platforms';
-  protected transactionsCollection = 'transactions';
+export const paymentPlatformService = {
+  async create(platform: Omit<PaymentPlatform, 'id' | 'created_at' | 'updated_at'>) {
+    const { data, error } = await supabase
+      .from('payment_platforms')
+      .insert([platform])
+      .select()
+      .single();
 
-  async saveConfig(config: PaymentPlatformConfig): Promise<void> {
+    if (error) throw error;
+    return data;
+  },
+
+  async update(id: string, platform: Partial<PaymentPlatform>) {
+    const { data, error } = await supabase
+      .from('payment_platforms')
+      .update(platform)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  async delete(id: string) {
+    const { error } = await supabase
+      .from('payment_platforms')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+  },
+
+  async getById(id: string) {
+    const { data, error } = await supabase
+      .from('payment_platforms')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  async getByUserId(userId: string) {
+    const { data, error } = await supabase
+      .from('payment_platforms')
+      .select('*')
+      .eq('user_id', userId);
+
+    if (error) throw error;
+    return data;
+  },
+
+  async validateApiKey(platformId: string, apiKey: string): Promise<boolean> {
     try {
-      const docRef = doc(db, this.collection, config.id);
-      await setDoc(docRef, {
-        ...config,
-        updatedAt: Timestamp.now(),
-      });
+      const { data } = await supabase
+        .from('payment_platforms')
+        .select('api_key')
+        .eq('id', platformId)
+        .single();
+
+      return data?.api_key === apiKey;
     } catch (error) {
-      console.error('Erro ao salvar configuração:', error);
-      throw error;
+      console.error('Erro ao validar API key:', error);
+      return false;
     }
-  }
+  },
 
-  async getConfig(platformId: string): Promise<PaymentPlatformConfig | null> {
-    try {
-      const docRef = doc(db, this.collection, platformId);
-      const docSnap = await getDoc(docRef);
-      
-      if (!docSnap.exists()) {
-        return null;
-      }
-
-      return docSnap.data() as PaymentPlatformConfig;
-    } catch (error) {
-      console.error('Erro ao buscar configuração:', error);
-      throw error;
-    }
-  }
-
-  async getAllConfigs(): Promise<PaymentPlatformConfig[]> {
-    try {
-      const querySnapshot = await getDocs(collection(db, this.collection));
-      return querySnapshot.docs.map(doc => doc.data() as PaymentPlatformConfig);
-    } catch (error) {
-      console.error('Erro ao buscar configurações:', error);
-      throw error;
-    }
-  }
-
-  async updateConfig(id: string, updates: Partial<PaymentPlatformConfig>): Promise<void> {
-    try {
-      const docRef = doc(db, this.collection, id);
-      await updateDoc(docRef, {
-        ...updates,
-        updatedAt: Timestamp.now(),
-      });
-    } catch (error) {
-      console.error('Erro ao atualizar configuração:', error);
-      throw error;
-    }
-  }
-
-  async saveTransaction(transaction: Omit<Transaction, 'id'>): Promise<string> {
-    try {
-      const docRef = await setDoc(doc(collection(db, this.transactionsCollection)), {
-        ...transaction,
-        createdAt: Timestamp.now(),
-        updatedAt: Timestamp.now(),
-      });
-      return docRef.id;
-    } catch (error) {
-      console.error('Erro ao salvar transação:', error);
-      throw error;
-    }
-  }
-
-  async getTransactions(platformId: string): Promise<Transaction[]> {
-    try {
-      const q = query(
-        collection(db, this.transactionsCollection),
-        where('platformId', '==', platformId)
-      );
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Transaction[];
-    } catch (error) {
-      console.error('Erro ao buscar transações:', error);
-      throw error;
-    }
-  }
-
-  async getStats(platformId: string): Promise<PaymentPlatformStats> {
-    try {
-      const transactions = await this.getTransactions(platformId);
-      const completedTransactions = transactions.filter(t => t.status === 'completed');
-      const refundedTransactions = transactions.filter(t => t.status === 'refunded');
-      const chargebackTransactions = transactions.filter(t => t.status === 'chargeback');
-
-      const totalSales = completedTransactions.length;
-      const totalRevenue = completedTransactions.reduce((acc, curr) => acc + curr.amount, 0);
-      const averageOrderValue = totalSales > 0 ? totalRevenue / totalSales : 0;
-      const refundRate = totalSales > 0 ? (refundedTransactions.length / totalSales) * 100 : 0;
-      const chargebackRate = totalSales > 0 ? (chargebackTransactions.length / totalSales) * 100 : 0;
-
-      return {
-        totalSales,
-        totalRevenue,
-        conversionRate: 0, // Implementar lógica específica
-        averageOrderValue,
-        refundRate,
-        chargebackRate,
-      };
-    } catch (error) {
-      console.error('Erro ao calcular estatísticas:', error);
-      throw error;
-    }
-  }
-} 
+  async listAvailablePlatforms() {
+    return [
+      { id: 'shopify', name: 'Shopify' },
+      { id: 'systeme', name: 'Systeme' },
+      { id: 'strivpay', name: 'StrivPay' },
+      { id: 'appmax', name: 'Appmax' },
+      { id: 'pepper', name: 'Pepper' },
+      { id: 'logzz', name: 'Logzz' },
+      { id: 'maxweb', name: 'MaxWeb' },
+      { id: 'digistore24', name: 'Digistore24' },
+      { id: 'fortpay', name: 'FortPay' },
+      { id: 'clickbank', name: 'ClickBank' },
+      { id: 'cartpanda', name: 'CartPanda' },
+      { id: 'doppus', name: 'Doppus' },
+      { id: 'nitro', name: 'Nitro' },
+      { id: 'mundpay', name: 'MundPay' },
+      { id: 'pagtrust', name: 'PagTrust' },
+      { id: 'hubla', name: 'Hubla' },
+      { id: 'ticto', name: 'Ticto' },
+      { id: 'kiwify', name: 'Kiwify' },
+ 

@@ -1,119 +1,87 @@
-import { db } from '../config/firebase';
-import {
-  collection,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  doc,
-  getDocs,
-  query,
-  where,
-  orderBy,
-  Timestamp,
-} from 'firebase/firestore';
-
-export interface Campaign {
-  id?: string;
-  name: string;
-  description: string;
-  platform: 'facebook' | 'instagram' | 'google';
-  status: 'active' | 'paused' | 'completed';
-  budget: number;
-  spent: number;
-  startDate: Date;
-  endDate: Date;
-  userId: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
+import { supabase } from '../config/supabase';
+import type { Campaign } from '../config/supabase';
 
 export const campaignService = {
-  create: async (campaign: Omit<Campaign, 'id' | 'createdAt' | 'updatedAt'>) => {
-    try {
-      const docRef = await addDoc(collection(db, 'campaigns'), {
-        ...campaign,
-        createdAt: Timestamp.now(),
-        updatedAt: Timestamp.now(),
-      });
-      return docRef.id;
-    } catch (error) {
-      console.error('Erro ao criar campanha:', error);
-      throw error;
-    }
+  async create(campaign: Omit<Campaign, 'id' | 'created_at' | 'updated_at'>) {
+    const { data, error } = await supabase
+      .from('campaigns')
+      .insert([campaign])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
   },
 
-  update: async (id: string, data: Partial<Campaign>) => {
-    try {
-      const docRef = doc(db, 'campaigns', id);
-      await updateDoc(docRef, {
-        ...data,
-        updatedAt: Timestamp.now(),
-      });
-    } catch (error) {
-      console.error('Erro ao atualizar campanha:', error);
-      throw error;
-    }
+  async update(id: string, campaign: Partial<Campaign>) {
+    const { data, error } = await supabase
+      .from('campaigns')
+      .update(campaign)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
   },
 
-  delete: async (id: string) => {
-    try {
-      const docRef = doc(db, 'campaigns', id);
-      await deleteDoc(docRef);
-    } catch (error) {
-      console.error('Erro ao deletar campanha:', error);
-      throw error;
-    }
+  async delete(id: string) {
+    const { error } = await supabase
+      .from('campaigns')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
   },
 
-  getAll: async (userId: string) => {
-    try {
-      const q = query(
-        collection(db, 'campaigns'),
-        where('userId', '==', userId),
-        orderBy('createdAt', 'desc')
-      );
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Campaign[];
-    } catch (error) {
-      console.error('Erro ao buscar campanhas:', error);
-      throw error;
-    }
+  async getById(id: string) {
+    const { data, error } = await supabase
+      .from('campaigns')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error) throw error;
+    return data;
   },
 
-  getActive: async (userId: string) => {
-    try {
-      const q = query(
-        collection(db, 'campaigns'),
-        where('userId', '==', userId),
-        where('status', '==', 'active'),
-        orderBy('createdAt', 'desc')
-      );
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Campaign[];
-    } catch (error) {
-      console.error('Erro ao buscar campanhas ativas:', error);
-      throw error;
-    }
+  async getByUserId(userId: string) {
+    const { data, error } = await supabase
+      .from('campaigns')
+      .select('*')
+      .eq('user_id', userId);
+
+    if (error) throw error;
+    return data;
   },
 
-  getStats: async (userId: string) => {
-    try {
-      const campaigns = await campaignService.getAll(userId);
-      return {
-        total: campaigns.length,
-        active: campaigns.filter((c) => c.status === 'active').length,
-        totalBudget: campaigns.reduce((acc, curr) => acc + curr.budget, 0),
-        totalSpent: campaigns.reduce((acc, curr) => acc + curr.spent, 0),
-      };
-    } catch (error) {
-      console.error('Erro ao buscar estatísticas:', error);
-      throw error;
+  async list(filters?: {
+    source?: string;
+    medium?: string;
+    startDate?: string;
+    endDate?: string;
+  }) {
+    let query = supabase.from('campaigns').select('*');
+
+    if (filters?.source) {
+      query = query.eq('source', filters.source);
     }
+
+    if (filters?.medium) {
+      query = query.eq('medium', filters.medium);
+    }
+
+    if (filters?.startDate) {
+      query = query.gte('created_at', filters.startDate);
+    }
+
+    if (filters?.endDate) {
+      query = query.lte('created_at', filters.endDate);
+    }
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+    return data;
   },
 }; 

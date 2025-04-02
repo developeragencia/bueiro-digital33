@@ -1,26 +1,25 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { Layout } from '../components/layout/Layout';
+import { AuthForm } from '../components/auth/AuthForm';
+import { CampaignList } from '../components/campaigns/CampaignList';
+import { CampaignForm } from '../components/campaigns/CampaignForm';
+import { UtmList } from '../components/utm/UtmList';
+import { UtmForm } from '../components/utm/UtmForm';
+import { AnalyticsDashboard } from '../components/analytics/AnalyticsDashboard';
+import { PaymentPlatformSettings } from '../components/payment/PaymentPlatformSettings';
 import { useAuth } from '../hooks/useAuth';
 
-// Layouts
-import Layout from '../components/layout/Layout';
+interface PrivateRouteProps {
+  children: React.ReactNode;
+}
 
-// Pages
-import Home from '../pages/Home';
-import Login from '../pages/auth/Login';
-import Register from '../pages/auth/Register';
-import Dashboard from '../pages/dashboard/Dashboard';
-import Campaigns from '../pages/campaigns/Campaigns';
-import UTMBuilder from '../pages/utm/UTMBuilder';
-import Analytics from '../pages/analytics/Analytics';
-import Settings from '../pages/settings/Settings';
-
-function PrivateRoute({ children }: { children: React.ReactNode }) {
+function PrivateRoute({ children }: PrivateRouteProps) {
   const { user, loading } = useAuth();
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      <div className="flex h-screen items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
       </div>
     );
   }
@@ -29,73 +28,95 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" />;
   }
 
-  return <>{children}</>;
+  return <Layout>{children}</Layout>;
 }
 
-export default function AppRoutes() {
+export function AppRoutes() {
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* Rotas Públicas */}
-        <Route path="/" element={<Home />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
+    <Routes>
+      <Route path="/login" element={<AuthForm mode="login" />} />
+      <Route path="/register" element={<AuthForm mode="register" />} />
 
-        {/* Rotas Privadas */}
-        <Route
-          path="/dashboard"
-          element={
-            <PrivateRoute>
-              <Layout>
-                <Dashboard />
-              </Layout>
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/campaigns"
-          element={
-            <PrivateRoute>
-              <Layout>
-                <Campaigns />
-              </Layout>
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/utm-builder"
-          element={
-            <PrivateRoute>
-              <Layout>
-                <UTMBuilder />
-              </Layout>
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/analytics"
-          element={
-            <PrivateRoute>
-              <Layout>
-                <Analytics />
-              </Layout>
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/settings"
-          element={
-            <PrivateRoute>
-              <Layout>
-                <Settings />
-              </Layout>
-            </PrivateRoute>
-          }
-        />
+      <Route
+        path="/"
+        element={
+          <PrivateRoute>
+            <CampaignList />
+          </PrivateRoute>
+        }
+      />
 
-        {/* Rota 404 */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+      <Route
+        path="/campaigns"
+        element={
+          <PrivateRoute>
+            <CampaignList />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/campaigns/new"
+        element={
+          <PrivateRoute>
+            <CampaignForm />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/campaigns/:id"
+        element={
+          <PrivateRoute>
+            <CampaignForm />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/utms"
+        element={
+          <PrivateRoute>
+            <UtmList />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/utms/new"
+        element={
+          <PrivateRoute>
+            <UtmForm />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/utms/:id"
+        element={
+          <PrivateRoute>
+            <UtmForm />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/analytics"
+        element={
+          <PrivateRoute>
+            <AnalyticsDashboard />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/payments"
+        element={
+          <PrivateRoute>
+            <PaymentPlatformSettings />
+          </PrivateRoute>
+        }
+      />
+    </Routes>
   );
 } 

@@ -1,0 +1,44 @@
+# Este é o arquivo de configuração do Supabase CLI.
+# https://supabase.com/docs/guides/cli
+
+project_id = "seu_project_id"
+
+[api]
+# A porta que o API Gateway irá escutar
+port = 54321
+# A porta que o Kong irá escutar
+kong_port = 54322
+# O nome do schema que contém as tabelas do PostgREST
+schemas = ["public", "storage"]
+# Funções extras para expor
+extra_search_path = ["public", "extensions"]
+# O modo de autenticação do PostgREST
+# - "jwt" para usar tokens JWT
+# - "anonymous" para desabilitar a autenticação
+auth = "jwt"
+
+[db]
+# Porta para o banco de dados PostgreSQL
+port = 54322
+# Nome do banco de dados principal
+database = "postgres"
+# Nome do usuário do banco de dados
+user = "postgres"
+# Senha do banco de dados (apenas para desenvolvimento)
+password = "postgres"
+
+[studio]
+# Porta para o Supabase Studio
+port = 54323
+
+[inbucket]
+# Porta para o servidor de email de teste
+port = 54324
+
+[storage]
+# Porta para o servidor de armazenamento
+port = 54325
+
+[auth]
+# Porta para o servidor de autenticação
+port = 54326 

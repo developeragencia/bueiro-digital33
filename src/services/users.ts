@@ -1,87 +1,107 @@
-import { db } from '../config/firebase';
-import {
-  collection,
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  Timestamp,
-} from 'firebase/firestore';
-
-export interface User {
-  id: string;
-  email: string;
-  name: string;
-  photoURL?: string;
-  createdAt: Date;
-  updatedAt: Date;
-  settings: {
-    emailNotifications: boolean;
-    pushNotifications: boolean;
-    darkMode: boolean;
-  };
-}
+import { supabase } from '../config/supabase';
+import type { User } from '../config/supabase';
 
 export const userService = {
-  create: async (user: Omit<User, 'createdAt' | 'updatedAt'>) => {
-    try {
-      const userRef = doc(db, 'users', user.id);
-      await setDoc(userRef, {
-        ...user,
-        createdAt: Timestamp.now(),
-        updatedAt: Timestamp.now(),
-      });
-    } catch (error) {
-      console.error('Erro ao criar usuário:', error);
+  async getProfile(userId: string) {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  async updateProfile(userId: string, profile: Partial<User>) {
+    const { data, error } = await supabase
+      .from('users')
+      .update(profile)
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  async deleteAccount(userId: string) {
+    // Primeiro, remove todos os dados relacionados
+    const tables = [
+      'analytics',
+      'campaigns',
+      'payment_platforms',
+      'utms',
+      'users',
+    ];
+
+    for (const table of tables) {
+      const { error } = await supabase
+        .from(table)
+        .delete()
+        .eq('user_id', userId);
+
+      if (error) throw error;
+    }
+
+    // Por fim, remove a conta do usuário
+    const { error } = await supabase.auth.admin.deleteUser(userId);
+    if (error) throw error;
+  },
+
+  async getPreferences(userId: string) {
+    const { data, error } = await supabase
+      .from('user_preferences')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') { // PGRST116 = Not Found
       throw error;
+    }
+
+    return data ?? {
+      theme: 'light',
+      notifications: true,
+      emailUpdates: true,
+    };
+  },
+
+  async updatePreferences(userId: string, preferences: {
+    theme?: 'light' | 'dark';
+    notifications?: boolean;
+    emailUpdates?: boolean;
+  }) {
+    const { data: existing } = await supabase
+      .from('user_preferences')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (existing) {
+      const { error } = await supabase
+        .from('user_preferences')
+        .update(preferences)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+    } else {
+      const { error } = await supabase
+        .from('user_preferences')
+        .insert([{ user_id: userId, ...preferences }]);
+
+      if (error) throw error;
     }
   },
 
-  get: async (userId: string): Promise<User | null> => {
-    try {
-      const userRef = doc(db, 'users', userId);
-      const userDoc = await getDoc(userRef);
+  async searchUsers(query: string) {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .or(`name.ilike.%${query}%,email.ilike.%${query}%`)
+      .limit(10);
 
-      if (!userDoc.exists()) {
-        return null;
-      }
-
-      return {
-        id: userDoc.id,
-        ...userDoc.data(),
-      } as User;
-    } catch (error) {
-      console.error('Erro ao buscar usuário:', error);
-      throw error;
-    }
-  },
-
-  update: async (userId: string, data: Partial<User>) => {
-    try {
-      const userRef = doc(db, 'users', userId);
-      await updateDoc(userRef, {
-        ...data,
-        updatedAt: Timestamp.now(),
-      });
-    } catch (error) {
-      console.error('Erro ao atualizar usuário:', error);
-      throw error;
-    }
-  },
-
-  updateSettings: async (
-    userId: string,
-    settings: User['settings']
-  ) => {
-    try {
-      const userRef = doc(db, 'users', userId);
-      await updateDoc(userRef, {
-        settings,
-        updatedAt: Timestamp.now(),
-      });
-    } catch (error) {
-      console.error('Erro ao atualizar configurações:', error);
-      throw error;
-    }
+    if (error) throw error;
+    return data;
   },
 }; 

@@ -10,6 +10,15 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  optimizeDeps: {
+    include: [
+      '@supabase/supabase-js',
+      '@tanstack/react-query',
+      '@tanstack/react-table',
+      'react-router-dom',
+      'recharts',
+    ],
+  },
   server: {
     port: 3000,
     host: true,
@@ -25,7 +34,6 @@ export default defineConfig({
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom'],
-          firebase: ['firebase/app', 'firebase/firestore'],
         },
       },
     },
