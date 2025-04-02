@@ -1,9 +1,15 @@
 import { supabase } from '../../lib/supabase';
-import { PaymentPlatform } from '../../types/supabase';
-import { AvailablePlatform, PlatformConfig, PlatformIntegration, PlatformSettings, PlatformStatus } from '../../types/payment';
+import { 
+  PaymentPlatform, 
+  PlatformSettings, 
+  PlatformStatus,
+  PaymentPlatformType,
+  AvailablePlatform 
+} from '../../types/payment';
+import { AvailablePlatform, PlatformConfig, PlatformIntegration } from '../../types/payment';
 import { transactionService } from './TransactionService';
 
-export class PaymentPlatformService {
+class PaymentPlatformServiceClass {
   protected platformId: string;
   protected transactionService = transactionService;
 
@@ -226,33 +232,17 @@ export class PaymentPlatformService {
 
   getDefaultPlatformSettings(): PlatformSettings {
     return {
-      features: {
-        webhooks: false,
-        refunds: false,
-        subscriptions: false,
-        split_payments: false,
-      },
-      limits: {
-        min_amount: 0,
-        max_amount: 0,
-        daily_transactions: 0,
-        monthly_transactions: 0,
-      },
-      currencies: ['BRL'],
-      payment_methods: ['credit_card'],
-      countries: ['BR'],
-      test_mode: true
+      client_id: '',
+      client_secret: '',
+      webhook_url: '',
+      webhook_secret: '',
+      api_key: '',
+      api_secret: ''
     };
   }
 
   getDefaultPlatformStatus(): PlatformStatus {
-    return {
-      is_active: true,
-      last_checked: new Date().toISOString(),
-      uptime: 100,
-      latency: 0,
-      errors: 0
-    };
+    return 'active';
   }
 
   async createPlatformIntegration(
@@ -288,7 +278,86 @@ export class PaymentPlatformService {
 
     return integration;
   }
+
+  async getPlatforms(): Promise<PaymentPlatform[]> {
+    const { data, error } = await supabase
+      .from('payment_platforms')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  }
+
+  async updatePlatform(
+    id: string,
+    platform: Partial<PaymentPlatform>
+  ): Promise<PaymentPlatform> {
+    const { data, error } = await supabase
+      .from('payment_platforms')
+      .update(platform)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  }
+
+  async updatePlatformSettings(
+    id: string,
+    settings: Partial<PlatformSettings>
+  ): Promise<PaymentPlatform> {
+    const { data: platform, error: getError } = await supabase
+      .from('payment_platforms')
+      .select('settings')
+      .eq('id', id)
+      .single();
+
+    if (getError) {
+      throw getError;
+    }
+
+    const updatedSettings = {
+      ...platform.settings,
+      ...settings
+    };
+
+    const { data, error } = await supabase
+      .from('payment_platforms')
+      .update({ settings: updatedSettings })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  }
+
+  async togglePlatform(id: string, isActive: boolean): Promise<PaymentPlatform> {
+    const { data, error } = await supabase
+      .from('payment_platforms')
+      .update({ is_active: isActive })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  }
 }
 
-export const paymentPlatformService = new PaymentPlatformService();
+export const PaymentPlatformService = new PaymentPlatformServiceClass();
  

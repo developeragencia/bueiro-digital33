@@ -1,4 +1,4 @@
-export type PaymentPlatform = 
+export type PaymentPlatformType = 
   | 'shopify'
   | 'systeme'
   | 'strivpay'
@@ -21,7 +21,7 @@ export type PaymentPlatform =
 
 export interface PaymentPlatformConfig {
   id: string;
-  name: PaymentPlatform;
+  name: PaymentPlatformType;
   apiKey: string;
   secretKey?: string;
   merchantId?: string;
@@ -125,6 +125,16 @@ export interface PlatformMetrics {
 }
 
 export type PlatformStatus = 'active' | 'inactive';
+
+export interface PaymentPlatform {
+  id: string;
+  name: PaymentPlatformType;
+  description: string;
+  is_active: boolean;
+  settings: PlatformSettings;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface PlatformIntegration {
   platform: AvailablePlatform;
