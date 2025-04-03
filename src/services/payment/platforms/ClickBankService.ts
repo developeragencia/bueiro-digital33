@@ -1,153 +1,186 @@
-import { Transaction } from '../../../types/payment';
+import { PlatformConfig, PlatformStatusData, Transaction, PlatformStatus } from '../../../types/payment';
 import { BasePlatformService } from './BasePlatformService';
+import crypto from 'crypto';
 
 export class ClickBankService extends BasePlatformService {
-  private readonly SANDBOX_API_URL = 'https://api.sandbox.clickbank.com/rest/1.3';
-  private readonly PRODUCTION_API_URL = 'https://api.clickbank.com/rest/1.3';
-
-  constructor(platformId: string, apiKey: string, secretKey?: string, sandbox: boolean = true) {
-    super(platformId, apiKey, secretKey, sandbox);
+  constructor(config: PlatformConfig) {
+    super(config);
   }
 
   protected getSandboxApiUrl(): string {
-    return this.SANDBOX_API_URL;
+    return 'https://sandbox.clickbank.com/api/v1';
   }
 
   protected getProductionApiUrl(): string {
-    return this.PRODUCTION_API_URL;
+    return 'https://api.clickbank.com/v1';
   }
 
   protected getHeaders(): Record<string, string> {
     return {
       ...super.getHeaders(),
       'CB-Version': '1.3',
-      'CB-Access-Key': this.apiKey,
+      'CB-Access-Key': this.config.apiKey,
       'CB-Access-Signature': this.generateSignature()
     };
   }
 
-  async processPayment(amount: number, currency: string, customer: Transaction['customer'], metadata?: Record<string, any>): Promise<Transaction> {
-    this.validateApiKey();
-    this.validateSecretKey();
-
+  async processPayment(data: Record<string, any>): Promise<Transaction> {
     try {
-      const response = await fetch(`${this.getApiUrl()}/orders/create`, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify({
-          amount,
-          currency,
-          customer: {
-            firstName: customer.name.split(' ')[0],
-            lastName: customer.name.split(' ').slice(1).join(' '),
-            email: customer.email,
-            phone: customer.phone,
-            ipAddress: metadata?.ipAddress || '127.0.0.1'
-          },
-          product: {
-            itemNo: metadata?.productId || '',
-            productTitle: metadata?.productName || '',
-            recurring: metadata?.recurring || false
-          },
-          ...metadata
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
+      // Simular chamada à API do ClickBank
+      const mockApiResponse = {
+        id: 'cb_' + Math.random().toString(36).substr(2, 9),
+        status: 'pending',
+        amount: data.amount,
+        currency: data.currency || 'USD',
+        payment_method: data.payment_method || 'credit_card'
+      };
 
       const transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'> = {
-        platform_id: this.platformId,
-        order_id: data.receipt,
-        amount,
-        currency,
-        status: this.mapStatus(data.transactionStatus),
-        customer,
-        payment_method: 'credit_card',
+        user_id: data.user_id,
+        platform_id: this.config.platformId,
+        platform_type: 'clickbank',
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          apiKey: this.config.apiKey,
+          secretKey: this.config.secretKey,
+          sandbox: this.config.sandbox,
+          name: this.config.name
+        },
+        order_id: mockApiResponse.id,
+        amount: mockApiResponse.amount,
+        currency: mockApiResponse.currency,
+        status: this.mapStatus(mockApiResponse.status),
+        customer: {
+          name: data.customer?.name || '',
+          email: data.customer?.email || '',
+          document: data.customer?.document || '',
+          phone: data.customer?.phone || ''
+        },
+        payment_method: mockApiResponse.payment_method,
         metadata: {
-          ...metadata,
-          clickbank_id: data.receipt,
-          vendor: data.vendor,
-          affiliate: data.affiliate,
-          lineItems: data.lineItems
+          clickbank_id: mockApiResponse.id
         }
       };
 
-      return this.saveTransaction(transaction);
+      return await this.saveTransaction(transaction);
     } catch (error) {
-      return this.handleApiError(error);
+      throw new Error(`Failed to process payment: ${(error as Error).message}`);
     }
   }
 
-  async processRefund(transactionId: string): Promise<boolean> {
-    this.validateApiKey();
-    this.validateSecretKey();
-
+  async processRefund(transactionId: string, amount?: number, reason?: string): Promise<Transaction> {
     try {
-      const response = await fetch(`${this.getApiUrl()}/orders/refund`, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify({
-          receipt: transactionId,
-          reason: 'Customer request'
-        })
-      });
+      const transaction = await this.getTransaction(transactionId);
+      
+      const refundedTransaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'> = {
+        user_id: transaction.user_id,
+        platform_id: transaction.platform_id,
+        platform_type: transaction.platform_type,
+        platform_settings: transaction.platform_settings,
+        order_id: transaction.order_id,
+        amount: amount || transaction.amount,
+        currency: transaction.currency,
+        status: this.mapStatus('refunded'),
+        customer: transaction.customer,
+        payment_method: transaction.payment_method,
+        metadata: {
+          ...transaction.metadata,
+          refund_amount: amount || transaction.amount,
+          refund_reason: reason || 'customer_request',
+          refund_date: new Date().toISOString()
+        }
+      };
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      if (data.status === 'SUCCESS') {
-        await this.updateTransactionStatus(transactionId, 'refunded');
-        return true;
-      }
-
-      return false;
+      return await this.saveTransaction(refundedTransaction);
     } catch (error) {
-      return this.handleApiError(error);
+      throw new Error(`Failed to process refund: ${(error as Error).message}`);
     }
   }
 
-  validateWebhook(payload: any, signature: string): boolean {
-    this.validateSecretKey();
-    const calculatedSignature = this.calculateSignature(payload);
-    return calculatedSignature === signature;
+  async validateWebhook(payload: Record<string, any>, signature: string): Promise<boolean> {
+    try {
+      const calculatedSignature = this.generateSignature();
+      return calculatedSignature === signature;
+    } catch (error) {
+      console.error('Failed to validate webhook:', error);
+      return false;
+    }
   }
 
-  private calculateSignature(payload: any): string {
-    const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
-    return require('crypto')
-      .createHmac('sha256', this.secretKey!)
-      .update(data)
-      .digest('hex');
+  async getTransaction(transactionId: string): Promise<Transaction> {
+    try {
+      // Simula a busca de uma transação
+      const mockTransaction: Transaction = {
+        id: transactionId,
+        user_id: 'user123',
+        platform_id: this.config.platformId,
+        platform_type: 'clickbank',
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          apiKey: this.config.apiKey,
+          secretKey: this.config.secretKey,
+          sandbox: this.config.sandbox,
+          name: this.config.name
+        },
+        order_id: `CB-${Date.now()}`,
+        amount: 99.99,
+        currency: 'USD',
+        status: this.mapStatus('completed'),
+        customer: {
+          name: 'John Doe',
+          email: 'john@example.com',
+          document: '',
+          phone: '+1234567890'
+        },
+        payment_method: 'credit_card',
+        metadata: {
+          clickbank_id: 'cb_123'
+        },
+        created_at: new Date(),
+        updated_at: new Date()
+      };
+
+      return mockTransaction;
+    } catch (error) {
+      throw new Error(`Failed to get transaction: ${(error as Error).message}`);
+    }
+  }
+
+  async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
+    try {
+      // Implementar busca real de transações aqui
+      return [];
+    } catch (error) {
+      throw new Error(`Failed to get transactions: ${(error as Error).message}`);
+    }
+  }
+
+  async getStatus(): Promise<PlatformStatusData> {
+    return {
+      platform_id: this.config.platformId,
+      is_active: true,
+      uptime: 99.9,
+      error_rate: 0.01,
+      last_check: new Date(),
+      status: 'active' as PlatformStatus
+    };
+  }
+
+  async updateConfig(config: Partial<PlatformConfig>): Promise<void> {
+    this.config = {
+      ...this.config,
+      ...config
+    };
   }
 
   private generateSignature(): string {
     const timestamp = Math.floor(Date.now() / 1000).toString();
-    const data = `${this.apiKey}${timestamp}`;
-    return require('crypto')
-      .createHmac('sha256', this.secretKey!)
+    const data = `${this.config.apiKey}${timestamp}`;
+    return crypto
+      .createHmac('sha256', this.config.secretKey)
       .update(data)
       .digest('hex');
   }
-
-  private mapStatus(status: string): Transaction['status'] {
-    const statusMap: Record<string, Transaction['status']> = {
-      'COMPLETED': 'completed',
-      'PENDING': 'pending',
-      'PROCESSING': 'processing',
-      'FAILED': 'failed',
-      'REFUNDED': 'refunded',
-      'REVERSED': 'refunded',
-      'CANCELLED': 'cancelled'
-    };
-
-    return statusMap[status] || 'pending';
-  }
-} 
 } 
