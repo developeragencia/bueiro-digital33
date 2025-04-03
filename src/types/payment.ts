@@ -1,4 +1,4 @@
-export type PaymentPlatformType =
+export type PaymentPlatformType = 
   | 'appmax'
   | 'cartpanda'
   | 'clickbank'
@@ -19,63 +19,96 @@ export type PaymentPlatformType =
   | 'systeme'
   | 'ticto';
 
+export type TransactionStatus = 
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'refunded'
+  | 'cancelled'
+  | 'disputed'
+  | 'expired'
+  | 'authorized'
+  | 'captured'
+  | 'voided'
+  | 'chargeback';
+
+export type PlatformStatus = 'active' | 'inactive' | 'error' | 'maintenance';
+
 export interface PlatformSettings {
+  webhookUrl: string;
+  webhookSecret: string;
   apiKey: string;
-  secretKey?: string;
-  sandbox?: boolean;
-  clientId?: string;
-  clientSecret?: string;
-  webhookUrl?: string;
-  redirectUrl?: string;
-  notificationUrl?: string;
-  customFields?: Record<string, any>;
+  secretKey: string;
+  sandbox: boolean;
+  name: string;
+  description?: string;
+  logo?: string;
+}
+
+export interface PlatformConfig {
+  platformId: string;
+  name: string;
+  settings: PlatformSettings;
+  apiKey: string;
+  secretKey: string;
+  sandbox: boolean;
+}
+
+export interface PlatformStatusData {
+  platform_id: string;
+  is_active: boolean;
+  uptime: number;
+  error_rate: number;
+  last_check: Date;
+  status: PlatformStatus;
+  message?: string;
+}
+
+export interface Customer {
+  id?: string;
+  name: string;
+  email: string;
+  document?: string;
+  phone?: string;
+  address?: {
+    street?: string;
+    number?: string;
+    complement?: string;
+    neighborhood?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+    zipcode?: string;
+  };
 }
 
 export interface PaymentPlatform {
   id: string;
-  user_id: string;
-  platform: PaymentPlatformType;
   name: string;
-  description?: string;
-  is_active: boolean;
+  type: PaymentPlatformType;
   settings: PlatformSettings;
-  created_at: string;
-  updated_at: string;
+  status: PlatformStatus;
+  active: boolean;
+  created_at: Date;
+  updated_at: Date;
 }
 
 export interface Transaction {
-  id?: string;
-  order_id: string;
+  id: string;
+  user_id: string;
   platform_id: string;
   platform_type: PaymentPlatformType;
-  platform_settings: {
-    apiKey: string;
-    secretKey: string;
-    sandbox?: boolean;
-  };
+  platform_settings: PlatformSettings;
+  order_id: string;
   amount: number;
   currency: string;
   status: TransactionStatus;
+  customer: Customer;
   payment_method: string;
-  customer: {
-    name: string;
-    email: string;
-    phone?: string;
-    document?: string;
-  };
-  metadata?: Record<string, any>;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export type TransactionStatus = 'pending' | 'approved' | 'declined' | 'refunded' | 'chargeback';
-
-export interface PlatformStatusData {
-  is_active: boolean;
-  last_checked: string;
-  uptime: number;
-  latency: number;
-  errors: number;
+  metadata: Record<string, any>;
+  created_at: Date;
+  updated_at: Date;
 }
 
 export interface AvailablePlatform {
@@ -84,14 +117,6 @@ export interface AvailablePlatform {
   platform: PaymentPlatformType;
   logo: string;
   description?: string;
-}
-
-export interface PlatformConfig {
-  apiKey: string;
-  secretKey?: string;
-  sandbox?: boolean;
-  clientId?: string;
-  clientSecret?: string;
 }
 
 export interface PlatformIntegration {
