@@ -1,17 +1,19 @@
-import { Transaction } from '../../../types/payment';
+import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus } from '../../../types/payment';
 import { supabase } from '../../../lib/supabase';
 
 export abstract class BasePlatformService {
   protected readonly platformId: string;
   protected readonly apiKey: string;
-  protected readonly secretKey?: string;
+  protected readonly secretKey: string;
   protected readonly sandbox: boolean;
+  protected config: PlatformConfig;
 
-  constructor(platformId: string, apiKey: string, secretKey?: string, sandbox: boolean = true) {
-    this.platformId = platformId;
-    this.apiKey = apiKey;
-    this.secretKey = secretKey;
-    this.sandbox = sandbox;
+  constructor(config: PlatformConfig) {
+    this.platformId = config.platformId;
+    this.apiKey = config.apiKey;
+    this.secretKey = config.secretKey;
+    this.sandbox = config.sandbox || false;
+    this.config = config;
   }
 
   protected abstract getSandboxApiUrl(): string;
@@ -41,37 +43,80 @@ export abstract class BasePlatformService {
   }
 
   protected async saveTransaction(transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>): Promise<Transaction> {
-    try {
-      const { data, error } = await supabase
-        .from('transactions')
-        .insert([transaction])
-        .select()
-        .single();
+    const { data, error } = await supabase
+      .from('transactions')
+      .insert([transaction])
+      .select()
+      .single();
 
-      if (error) {
-        throw error;
-      }
+    if (error) {
+      throw new Error(`Failed to save transaction: ${error.message}`);
+    }
 
-      return data;
-    } catch (error) {
-      console.error('Error saving transaction:', error);
-      throw error;
+    return data;
+  }
+
+  protected async getTransactionById(id: string): Promise<Transaction | null> {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to get transaction: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  protected async updateTransaction(id: string, updates: Partial<Transaction>): Promise<Transaction> {
+    const { data, error } = await supabase
+      .from('transactions')
+      .update({ ...updates, updated_at: new Date() })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update transaction: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  protected async deleteTransaction(id: string): Promise<void> {
+    const { data, error } = await supabase
+      .from('transactions')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      throw new Error(`Failed to delete transaction: ${error.message}`);
     }
   }
 
-  protected async updateTransactionStatus(transactionId: string, status: Transaction['status']): Promise<void> {
-    try {
-      const { error } = await supabase
-        .from('transactions')
-        .update({ status })
-        .eq('order_id', transactionId);
+  protected async listTransactions(filters: Record<string, any> = {}): Promise<Transaction[]> {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .match(filters);
 
-      if (error) {
-        throw error;
-      }
-    } catch (error) {
-      console.error('Error updating transaction status:', error);
-      throw error;
+    if (error) {
+      throw new Error(`Failed to list transactions: ${error.message}`);
+    }
+
+    return data || [];
+  }
+
+  protected async updateTransactionStatus(id: string, status: TransactionStatus): Promise<void> {
+    const { error } = await supabase
+      .from('transactions')
+      .update({ status, updated_at: new Date() })
+      .eq('id', id);
+
+    if (error) {
+      throw new Error(`Failed to update transaction status: ${error.message}`);
     }
   }
 
@@ -161,41 +206,32 @@ export abstract class BasePlatformService {
     }
   }
 
-  protected async deleteTransaction(transactionId: string): Promise<void> {
-    try {
-      const { error } = await supabase
-        .from('transactions')
-        .delete()
-        .eq('order_id', transactionId);
+  abstract processPayment(data: Record<string, any>): Promise<Transaction>;
+  
+  abstract processRefund(transactionId: string, amount?: number, reason?: string): Promise<Transaction>;
+  
+  abstract validateWebhook(payload: Record<string, any>, signature: string): Promise<boolean>;
+  
+  abstract getTransaction(transactionId: string): Promise<Transaction>;
+  
+  abstract getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]>;
+  
+  abstract getStatus(): Promise<PlatformStatusData>;
+  
+  abstract updateConfig(config: Partial<PlatformConfig>): Promise<void>;
 
-      if (error) {
-        throw error;
-      }
-    } catch (error) {
-      console.error('Error deleting transaction:', error);
-      throw error;
-    }
+  protected mapStatus(status: string): Transaction['status'] {
+    const statusMap: Record<string, Transaction['status']> = {
+      'completed': 'completed',
+      'pending': 'pending',
+      'processing': 'processing',
+      'failed': 'failed',
+      'refunded': 'refunded',
+      'partially_refunded': 'refunded',
+      'cancelled': 'cancelled',
+      'expired': 'failed'
+    };
+
+    return statusMap[status.toLowerCase()] || 'pending';
   }
-
-  abstract processPayment(
-    amount: number,
-    currency: string,
-    customer: Record<string, any>,
-    metadata?: Record<string, any>
-  ): Promise<Transaction>;
-
-  abstract processRefund(
-    transactionId: string,
-    amount?: number,
-    reason?: string
-  ): Promise<Transaction>;
-
-  abstract validateWebhook(
-    payload: Record<string, any>,
-    signature: string
-  ): boolean;
-
-  abstract getTransaction(orderId: string): Promise<Record<string, any>>;
-
-  protected abstract calculateSignature(data: string): string;
 } 
