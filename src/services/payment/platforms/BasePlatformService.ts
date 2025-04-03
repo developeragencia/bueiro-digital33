@@ -227,9 +227,9 @@ export abstract class BasePlatformService {
       'processing': 'processing',
       'failed': 'failed',
       'refunded': 'refunded',
-      'partially_refunded': 'refunded',
+      'partially_refunded': 'partially_refunded',
       'cancelled': 'cancelled',
-      'expired': 'failed'
+      'expired': 'expired'
     };
 
     return statusMap[status.toLowerCase()] || 'pending';
