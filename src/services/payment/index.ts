@@ -1,5 +1,5 @@
 export { paymentPlatformService } from './PaymentPlatformService';
-export { transactionService } from './TransactionService';
-export { webhookService } from './WebhookService';
-export { metricsService } from './MetricsService';
-export { statusService } from './StatusService'; 
+export { TransactionService } from './TransactionService';
+export { WebhookService } from './WebhookService';
+export { MetricsService } from './MetricsService';
+export { StatusService } from './StatusService'; 

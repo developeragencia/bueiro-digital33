@@ -1,9 +1,10 @@
-import { Transaction } from '../../../types/payment';
+import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
 import { BasePlatformService } from './BasePlatformService';
+import axios from 'axios';
 
 export class StrivPayService extends BasePlatformService {
-  private readonly SANDBOX_API_URL = 'https://sandbox.api.strivpay.com/v1';
-  private readonly PRODUCTION_API_URL = 'https://api.strivpay.com/v1';
+  private readonly SANDBOX_API_URL = 'https://sandbox.strivpay.com/api/v1';
+  private readonly PRODUCTION_API_URL = 'https://api.strivpay.com/api/v1';
 
   constructor(platformId: string, apiKey: string, secretKey?: string, sandbox: boolean = true) {
     super(platformId, apiKey, secretKey, sandbox);
@@ -18,153 +19,233 @@ export class StrivPayService extends BasePlatformService {
   }
 
   protected getHeaders(): Record<string, string> {
-    return {
-      ...super.getHeaders(),
-      'X-StrivPay-Key': this.apiKey,
-      'X-StrivPay-Signature': this.generateSignature()
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-API-Key': this.config.settings.apiKey || ''
     };
+    return headers;
   }
 
-  async processPayment(amount: number, currency: string, customer: Transaction['customer'], metadata?: Record<string, any>): Promise<Transaction> {
-    this.validateApiKey();
-
-    try {
-      const response = await fetch(`${this.getApiUrl()}/transactions`, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify({
-          amount,
-          currency,
-          customer: {
-            name: customer.name,
-            email: customer.email,
-            phone: customer.phone,
-            document: customer.document,
-            address: metadata?.address
-          },
-          product: {
-            id: metadata?.productId,
-            name: metadata?.productName,
-            price: amount,
-            quantity: metadata?.quantity || 1
-          },
-          payment: {
-            method: metadata?.paymentMethod || 'credit_card',
-            installments: metadata?.installments || 1,
-            card: metadata?.card
-          },
-          notification_url: metadata?.notificationUrl,
-          ...metadata
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      const transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'> = {
-        platform_id: this.platformId,
-        order_id: data.transaction_id,
-        amount,
-        currency,
-        status: this.mapStatus(data.status),
-        customer,
-        payment_method: data.payment_method,
-        metadata: {
-          ...metadata,
-          strivpay_id: data.id,
-          payment_url: data.payment_url,
-          invoice_url: data.invoice_url,
-          boleto_url: data.boleto_url,
-          pix_qrcode: data.pix_qrcode,
-          pix_code: data.pix_code,
-          installments: data.installments,
-          installment_amount: data.installment_amount,
-          affiliate: data.affiliate,
-          commission: data.commission,
-          producer: data.producer,
-          producer_commission: data.producer_commission,
-          antifraud_score: data.antifraud_score,
-          risk_level: data.risk_level
-        }
-      };
-
-      return this.saveTransaction(transaction);
-    } catch (error) {
-      return this.handleApiError(error);
+  protected mapStatus(status: string): TransactionStatus {
+    switch (status.toLowerCase()) {
+      case 'approved':
+      case 'paid':
+        return 'paid';
+      case 'pending':
+        return 'pending';
+      case 'failed':
+      case 'declined':
+        return 'failed';
+      case 'refunded':
+        return 'refunded';
+      case 'cancelled':
+        return 'cancelled';
+      case 'inactive':
+        return 'inactive';
+      default:
+        return 'error';
     }
   }
 
-  async processRefund(transactionId: string): Promise<boolean> {
-    this.validateApiKey();
-
+  async processPayment(
+    amount: number,
+    currency: Currency,
+    customer: Customer,
+    metadata?: Record<string, any>
+  ): Promise<Transaction> {
     try {
-      const response = await fetch(`${this.getApiUrl()}/transactions/${transactionId}/refund`, {
-        method: 'POST',
+      const response = await axios.post(
+        `${this.getApiUrl()}/payments`,
+        {
+          amount,
+          currency,
+          customer,
+          metadata
+        },
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        platform_id: this.config.platform_id,
+        amount,
+        currency,
+        customer,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: 'StrivPay'
+        },
+        status: this.mapStatus(response.data.status),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata
+      };
+    } catch (error) {
+      throw this.createError('Failed to process payment', error);
+    }
+  }
+
+  async processRefund(
+    transactionId: string,
+    amount?: number,
+    reason?: string
+  ): Promise<Transaction> {
+    try {
+      const response = await axios.post(
+        `${this.getApiUrl()}/refunds`,
+        {
+          transaction_id: transactionId,
+          amount,
+          reason
+        },
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        platform_id: this.config.platform_id,
+        amount: response.data.amount,
+        currency: response.data.currency as Currency,
+        customer: response.data.customer,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: 'StrivPay'
+        },
+        status: this.mapStatus(response.data.status),
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
+      };
+    } catch (error) {
+      throw this.createError('Failed to process refund', error);
+    }
+  }
+
+  async validateWebhook(payload: Record<string, any>, signature: string): Promise<boolean> {
+    try {
+      const calculatedSignature = this.calculateSignature(payload);
+      return calculatedSignature === signature;
+    } catch (error) {
+      throw this.createError('Failed to validate webhook', error);
+    }
+  }
+
+  async getTransaction(transactionId: string): Promise<Transaction> {
+    try {
+      const response = await axios.get(
+        `${this.getApiUrl()}/transactions/${transactionId}`,
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        platform_id: this.config.platform_id,
+        amount: response.data.amount,
+        currency: response.data.currency as Currency,
+        customer: response.data.customer,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: 'StrivPay'
+        },
+        status: this.mapStatus(response.data.status),
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
+      };
+    } catch (error) {
+      throw this.createError('Failed to get transaction', error);
+    }
+  }
+
+  async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
+    try {
+      const params: Record<string, any> = {};
+      if (startDate) params.start_date = startDate.toISOString();
+      if (endDate) params.end_date = endDate.toISOString();
+
+      const response = await axios.get(`${this.getApiUrl()}/transactions`, {
+        headers: this.getHeaders(),
+        params
+      });
+
+      return response.data.transactions.map((tx: any) => ({
+        id: tx.id,
+        platform_id: this.config.platform_id,
+        amount: tx.amount,
+        currency: tx.currency as Currency,
+        customer: tx.customer,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: 'StrivPay'
+        },
+        status: this.mapStatus(tx.status),
+        created_at: new Date(tx.created_at),
+        updated_at: new Date(tx.updated_at),
+        metadata: tx.metadata
+      }));
+    } catch (error) {
+      throw this.createError('Failed to get transactions', error);
+    }
+  }
+
+  async getStatus(): Promise<PlatformStatusData> {
+    try {
+      const response = await axios.get(`${this.getApiUrl()}/status`, {
         headers: this.getHeaders()
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      if (data.success) {
-        await this.updateTransactionStatus(transactionId, 'refunded');
-        return true;
-      }
-
-      return false;
+      return {
+        platform_id: this.config.platform_id,
+        status: response.data.is_active ? 'active' as TransactionStatus : 'inactive' as TransactionStatus,
+        success_rate: response.data.success_rate,
+        error_rate: response.data.error_rate,
+        latency: response.data.latency,
+        uptime: response.data.uptime,
+        last_checked: new Date()
+      };
     } catch (error) {
-      return this.handleApiError(error);
+      throw this.createError('Failed to get platform status', error);
     }
   }
 
-  validateWebhook(payload: any, signature: string): boolean {
-    this.validateSecretKey();
-    const calculatedSignature = this.calculateSignature(payload);
-    return calculatedSignature === signature;
+  async updateConfig(config: Partial<PlatformConfig>): Promise<void> {
+    try {
+      await axios.put(
+        `${this.getApiUrl()}/config`,
+        config,
+        { headers: this.getHeaders() }
+      );
+    } catch (error) {
+      throw this.createError('Failed to update platform configuration', error);
+    }
   }
 
-  private calculateSignature(payload: any): string {
-    const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
-    return require('crypto')
-      .createHmac('sha256', this.secretKey!)
+  private calculateSignature(payload: Record<string, any>): string {
+    const data = JSON.stringify(payload);
+    const crypto = require('crypto');
+    return crypto
+      .createHmac('sha256', this.config.settings.webhookSecret || '')
       .update(data)
       .digest('hex');
-  }
-
-  private generateSignature(): string {
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const data = `${this.apiKey}${timestamp}`;
-    return require('crypto')
-      .createHmac('sha256', this.secretKey!)
-      .update(data)
-      .digest('hex');
-  }
-
-  private mapStatus(status: string): Transaction['status'] {
-    const statusMap: Record<string, Transaction['status']> = {
-      'approved': 'completed',
-      'pending': 'pending',
-      'processing': 'processing',
-      'failed': 'failed',
-      'refunded': 'refunded',
-      'partially_refunded': 'refunded',
-      'cancelled': 'cancelled',
-      'expired': 'failed',
-      'chargeback': 'failed',
-      'dispute': 'processing',
-      'waiting_payment': 'pending',
-      'analysis': 'processing',
-      'fraud_analysis': 'processing',
-      'high_risk': 'failed',
-      'blocked': 'failed'
-    };
-
-    return statusMap[status.toLowerCase()] || 'pending';
   }
 } 

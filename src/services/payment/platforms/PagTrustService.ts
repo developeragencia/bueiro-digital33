@@ -1,191 +1,229 @@
-import { PaymentPlatformService } from '../PaymentPlatformService';
-import { Transaction } from '../../../types/payment';
+import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
+import { BasePlatformService } from './BasePlatformService';
+import axios from 'axios';
 
-export class PagTrustService extends PaymentPlatformService {
-  private baseUrl: string;
-  private headers: HeadersInit;
-
-  constructor(apiKey: string, secretKey: string, sandbox: boolean = true) {
-    super();
-    this.baseUrl = sandbox
-      ? 'https://api.sandbox.pagtrust.com.br'
-      : 'https://api.pagtrust.com.br';
-    this.headers = {
-      'Content-Type': 'application/json',
-      'X-Api-Key': apiKey,
-      'X-Merchant-Id': secretKey,
-    };
+export class PagTrustService extends BasePlatformService {
+  getSandboxApiUrl(): string {
+    return 'https://sandbox.pagtrust.com/api/v1';
   }
 
-  async fetchOrders(): Promise<Transaction[]> {
-    try {
-      const response = await fetch(`${this.baseUrl}/v1/transactions`, {
-        headers: this.headers,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return data.transactions.map(this.mapOrderToTransaction);
-    } catch (error) {
-      console.error('Erro ao buscar transações do PagTrust:', error);
-      throw error;
-    }
+  getProductionApiUrl(): string {
+    return 'https://api.pagtrust.com/api/v1';
   }
 
-  private mapOrderToTransaction(transaction: any): Transaction {
+  protected getHeaders(): Record<string, string> {
     return {
-      id: transaction.id.toString(),
-      platformId: 'pagtrust',
-      orderId: transaction.order_id,
-      amount: transaction.amount,
-      currency: transaction.currency || 'BRL',
-      status: this.mapStatus(transaction.status),
-      customer: {
-        name: transaction.customer.name,
-        email: transaction.customer.email,
-        phone: transaction.customer.phone,
-        document: transaction.customer.document,
-      },
-      product: {
-        id: transaction.product.id,
-        name: transaction.product.name,
-        price: transaction.product.price,
-        quantity: transaction.product.quantity,
-      },
-      paymentMethod: transaction.payment_method,
-      createdAt: new Date(transaction.created_at),
-      updatedAt: new Date(transaction.updated_at),
-      metadata: {
-        payment: {
-          installments: transaction.payment_details.installments,
-          installmentAmount: transaction.payment_details.installment_amount,
-          paymentLink: transaction.payment_details.payment_link,
-          pixQrCode: transaction.payment_details.pix_qr_code,
-          pixKey: transaction.payment_details.pix_key,
-          boletoUrl: transaction.payment_details.boleto_url,
-          boletoBarcode: transaction.payment_details.boleto_barcode,
-          cardBrand: transaction.payment_details.card_brand,
-          cardLastFour: transaction.payment_details.card_last_four,
-        },
-        customer: {
-          address: transaction.customer.address,
-          city: transaction.customer.city,
-          state: transaction.customer.state,
-          zipcode: transaction.customer.zipcode,
-          country: transaction.customer.country,
-        },
-        seller: {
-          id: transaction.seller?.id,
-          name: transaction.seller?.name,
-          commission: transaction.seller?.commission,
-          commissionAmount: transaction.seller?.commission_amount,
-        },
-        subscription: {
-          id: transaction.subscription?.id,
-          status: transaction.subscription?.status,
-          plan: transaction.subscription?.plan,
-          interval: transaction.subscription?.interval,
-          intervalCount: transaction.subscription?.interval_count,
-          startDate: transaction.subscription?.start_date,
-          endDate: transaction.subscription?.end_date,
-        },
-        fraud: {
-          score: transaction.fraud_analysis?.score,
-          status: transaction.fraud_analysis?.status,
-          recommendation: transaction.fraud_analysis?.recommendation,
-          details: transaction.fraud_analysis?.details,
-        },
-        split: {
-          enabled: transaction.split?.enabled,
-          rules: transaction.split?.rules,
-          amounts: transaction.split?.amounts,
-        },
-      },
+      'Content-Type': 'application/json',
+      'X-API-Key': this.config.settings.apiKey,
+      'X-Secret-Key': this.config.settings.secretKey || ''
     };
   }
 
-  private mapStatus(status: string): 'completed' | 'pending' | 'failed' {
-    switch (status.toLowerCase()) {
-      case 'approved':
-      case 'paid':
-      case 'captured':
-      case 'completed':
-        return 'completed';
-      case 'pending':
-      case 'waiting_payment':
-      case 'processing':
-      case 'authorized':
-        return 'pending';
-      case 'cancelled':
-      case 'refunded':
-      case 'chargeback':
-      case 'expired':
-      case 'declined':
-      case 'failed':
-      default:
-        return 'failed';
-    }
-  }
-
-  async syncTransactions(): Promise<void> {
+  async processPayment(
+    amount: number,
+    currency: Currency,
+    customer: Customer,
+    metadata?: Record<string, any>
+  ): Promise<Transaction> {
     try {
-      const transactions = await this.fetchOrders();
-      for (const transaction of transactions) {
-        await this.saveTransaction(transaction);
-      }
+      const response = await axios.post(
+        `${this.getApiUrl()}/payments`,
+        {
+          amount,
+          currency,
+          customer,
+          metadata
+        },
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'pagtrust',
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        customer: response.data.customer,
+        payment_method: response.data.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: response.data.status as TransactionStatus,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
+      };
     } catch (error) {
-      console.error('Erro ao sincronizar transações do PagTrust:', error);
-      throw error;
+      throw this.handleError(error);
     }
   }
 
-  async createWebhook(url: string): Promise<void> {
+  async processRefund(
+    transactionId: string,
+    amount: number,
+    metadata?: Record<string, any>
+  ): Promise<Transaction> {
     try {
-      const response = await fetch(`${this.baseUrl}/v1/webhooks`, {
-        method: 'POST',
-        headers: this.headers,
-        body: JSON.stringify({
-          url,
-          events: [
-            'transaction.created',
-            'transaction.authorized',
-            'transaction.paid',
-            'transaction.failed',
-            'transaction.cancelled',
-            'transaction.refunded',
-            'transaction.chargeback',
-            'subscription.created',
-            'subscription.activated',
-            'subscription.cancelled',
-            'subscription.expired',
-            'split.processed',
-          ],
-          active: true,
-          description: 'Webhook para integração com sistema de gestão',
-        }),
+      const response = await axios.post(
+        `${this.getApiUrl()}/refunds`,
+        {
+          transaction_id: transactionId,
+          amount,
+          metadata
+        },
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'pagtrust',
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        customer: response.data.customer,
+        payment_method: response.data.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: response.data.status as TransactionStatus,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async validateWebhook(payload: Record<string, any>, signature: string): Promise<boolean> {
+    const calculatedSignature = this.calculateSignature(payload);
+    return calculatedSignature === signature;
+  }
+
+  async getTransaction(transactionId: string): Promise<Transaction> {
+    try {
+      const response = await axios.get(
+        `${this.getApiUrl()}/transactions/${transactionId}`,
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'pagtrust',
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        customer: response.data.customer,
+        payment_method: response.data.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: response.data.status as TransactionStatus,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
+    try {
+      const params: Record<string, any> = {};
+      if (startDate) params.start_date = startDate.toISOString();
+      if (endDate) params.end_date = endDate.toISOString();
+
+      const response = await axios.get(`${this.getApiUrl()}/transactions`, {
+        headers: this.getHeaders(),
+        params
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+      return response.data.map((tx: any) => ({
+        id: tx.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'pagtrust',
+        order_id: tx.order_id,
+        amount: tx.amount,
+        currency: tx.currency,
+        customer: tx.customer,
+        payment_method: tx.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: tx.status as TransactionStatus,
+        created_at: new Date(tx.created_at),
+        updated_at: new Date(tx.updated_at),
+        metadata: tx.metadata
+      }));
     } catch (error) {
-      console.error('Erro ao criar webhook no PagTrust:', error);
-      throw error;
+      throw this.handleError(error);
     }
   }
 
-  async handleWebhook(payload: any): Promise<void> {
+  async getStatus(): Promise<PlatformStatusData> {
     try {
-      if (payload.event.startsWith('transaction.')) {
-        const transaction = this.mapOrderToTransaction(payload.data);
-        await this.saveTransaction(transaction);
-      }
+      const response = await axios.get(`${this.getApiUrl()}/status`, {
+        headers: this.getHeaders()
+      });
+
+      return {
+        platform_id: this.config.platform_id,
+        status: response.data.status as TransactionStatus,
+        error_rate: response.data.error_rate,
+        success_rate: response.data.success_rate,
+        is_active: response.data.is_active,
+        last_checked: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: response.data.metadata
+      };
     } catch (error) {
-      console.error('Erro ao processar webhook do PagTrust:', error);
-      throw error;
+      throw this.handleError(error);
     }
+  }
+
+  async updateConfig(config: Partial<PlatformConfig>): Promise<void> {
+    Object.assign(this.config, config);
+  }
+
+  private calculateSignature(payload: Record<string, any>): string {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const data = `${this.config.settings.secretKey}${timestamp}`;
+    return require('crypto')
+      .createHmac('sha256', this.config.settings.secretKey || '')
+      .update(data)
+      .digest('hex');
   }
 } 

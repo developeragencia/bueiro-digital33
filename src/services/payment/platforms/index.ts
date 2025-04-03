@@ -1,4 +1,4 @@
-import { PaymentPlatformType, PlatformConfig } from '../../../types/payment';
+import { PlatformConfig, Currency } from '../../../types/payment';
 import { AppmaxService } from './AppmaxService';
 import { CartPandaService } from './CartPandaService';
 import { ClickBankService } from './ClickBankService';
@@ -18,50 +18,100 @@ import { ShopifyService } from './ShopifyService';
 import { StrivPayService } from './StrivPayService';
 import { SystemeService } from './SystemeService';
 import { TictoService } from './TictoService';
+import { TwispayService } from './TwispayService';
+import { WooCommerceService } from './WooCommerceService';
+import { YapayService } from './YapayService';
+import { BasePlatformService } from './BasePlatformService';
 
-export function getPlatformService(platform: PaymentPlatformType, config: PlatformConfig) {
-  const { apiKey, secretKey, sandbox = true } = config;
-
-  switch (platform) {
-    case 'appmax':
-      return new AppmaxService(apiKey, secretKey, sandbox);
-    case 'cartpanda':
-      return new CartPandaService(apiKey, secretKey, sandbox);
-    case 'clickbank':
-      return new ClickBankService(apiKey, secretKey, sandbox);
-    case 'digistore24':
-      return new Digistore24Service(apiKey, secretKey, sandbox);
-    case 'doppus':
-      return new DoppusService(apiKey, secretKey, sandbox);
-    case 'fortpay':
-      return new FortPayService(apiKey, secretKey, sandbox);
-    case 'frc':
-      return new FRCService(apiKey, secretKey, sandbox);
-    case 'hubla':
-      return new HublaService(apiKey, secretKey, sandbox);
-    case 'kiwify':
-      return new KiwifyService(apiKey, secretKey, sandbox);
-    case 'logzz':
-      return new LogzzService(apiKey, secretKey, sandbox);
-    case 'maxweb':
-      return new MaxWebService(apiKey, secretKey, sandbox);
-    case 'mundpay':
-      return new MundPayService(apiKey, secretKey, sandbox);
-    case 'nitro':
-      return new NitroService(apiKey, secretKey, sandbox);
-    case 'pagtrust':
-      return new PagTrustService(apiKey, secretKey, sandbox);
-    case 'pepper':
-      return new PepperService(apiKey, secretKey, sandbox);
-    case 'shopify':
-      return new ShopifyService(apiKey, secretKey, sandbox);
-    case 'strivpay':
-      return new StrivPayService(apiKey, secretKey, sandbox);
-    case 'systeme':
-      return new SystemeService(apiKey, secretKey, sandbox);
-    case 'ticto':
-      return new TictoService(apiKey, secretKey, sandbox);
-    default:
-      throw new Error(`Unsupported payment platform: ${platform}`);
+export function getPlatformService(config: PlatformConfig): BasePlatformService {
+  // Ensure required settings are present
+  if (!config.settings.apiKey) {
+    throw new Error('API Key is required');
   }
-} 
+
+  // Set default values
+  const platformConfig: PlatformConfig = {
+    ...config,
+    settings: {
+      ...config.settings,
+      currency: config.settings.currency || 'BRL' as Currency,
+      active: config.settings.active ?? true,
+      sandbox: config.settings.sandbox ?? true
+    }
+  };
+
+  switch (config.type) {
+    case 'appmax':
+      return new AppmaxService(platformConfig);
+    case 'cartpanda':
+      return new CartPandaService(platformConfig);
+    case 'clickbank':
+      return new ClickBankService(platformConfig);
+    case 'digistore24':
+      return new Digistore24Service(platformConfig);
+    case 'doppus':
+      return new DoppusService(platformConfig);
+    case 'fortpay':
+      return new FortPayService(platformConfig);
+    case 'frc':
+      return new FRCService(platformConfig);
+    case 'hubla':
+      return new HublaService(platformConfig);
+    case 'kiwify':
+      return new KiwifyService(platformConfig);
+    case 'logzz':
+      return new LogzzService(platformConfig);
+    case 'maxweb':
+      return new MaxWebService(platformConfig);
+    case 'mundpay':
+      return new MundPayService(platformConfig);
+    case 'nitro':
+      return new NitroService(platformConfig);
+    case 'pagtrust':
+      return new PagTrustService(platformConfig);
+    case 'pepper':
+      return new PepperService(platformConfig);
+    case 'shopify':
+      return new ShopifyService(platformConfig);
+    case 'strivpay':
+      return new StrivPayService(platformConfig);
+    case 'systeme':
+      return new SystemeService(platformConfig);
+    case 'ticto':
+      return new TictoService(platformConfig);
+    case 'twispay':
+      return new TwispayService(platformConfig);
+    case 'woocommerce':
+      return new WooCommerceService(platformConfig);
+    case 'yapay':
+      return new YapayService(platformConfig);
+    default:
+      throw new Error(`Unsupported platform type: ${config.type}`);
+  }
+}
+
+export {
+  BasePlatformService,
+  AppmaxService,
+  CartPandaService,
+  ClickBankService,
+  Digistore24Service,
+  DoppusService,
+  FortPayService,
+  FRCService,
+  HublaService,
+  KiwifyService,
+  LogzzService,
+  MaxWebService,
+  MundPayService,
+  NitroService,
+  PagTrustService,
+  PepperService,
+  ShopifyService,
+  StrivPayService,
+  SystemeService,
+  TictoService,
+  TwispayService,
+  WooCommerceService,
+  YapayService
+}; 

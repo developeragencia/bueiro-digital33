@@ -1,76 +1,67 @@
-export type PaymentPlatformType = 
-  | 'appmax'
-  | 'cartpanda'
-  | 'clickbank'
-  | 'digistore24'
-  | 'doppus'
-  | 'fortpay'
-  | 'frc'
-  | 'hubla'
-  | 'kiwify'
+export type PaymentPlatformType =
+  | 'stripe'
+  | 'paypal'
+  | 'mercadopago'
+  | 'pagseguro'
+  | 'cielo'
+  | 'rede'
+  | 'getnet'
+  | 'stone'
+  | 'pepper'
   | 'logzz'
   | 'maxweb'
   | 'mundpay'
   | 'nitro'
   | 'pagtrust'
-  | 'pepper'
   | 'shopify'
   | 'strivpay'
   | 'systeme'
-  | 'ticto';
+  | 'woocommerce'
+  | 'yapay'
+  | 'kiwify';
 
-export type TransactionStatus = 
+export type TransactionStatus =
   | 'pending'
   | 'processing'
   | 'completed'
   | 'failed'
   | 'refunded'
-  | 'cancelled'
-  | 'disputed'
-  | 'expired'
+  | 'partially_refunded'
+  | 'chargeback'
+  | 'dispute'
   | 'authorized'
-  | 'captured'
-  | 'voided'
-  | 'chargeback';
+  | 'cancelled'
+  | 'expired';
 
 export type PlatformStatus = 'active' | 'inactive' | 'error' | 'maintenance';
 
-export interface PlatformSettings {
-  webhookUrl: string;
-  webhookSecret: string;
-  apiKey: string;
-  secretKey: string;
-  sandbox: boolean;
-  name: string;
-  description?: string;
-  logo?: string;
-}
+export type Currency = 'BRL' | 'USD' | 'EUR';
 
-export interface PlatformConfig {
-  platformId: string;
-  name: string;
-  settings: PlatformSettings;
-  apiKey: string;
-  secretKey: string;
-  sandbox: boolean;
-}
+export type PaymentMethod =
+  | 'credit_card'
+  | 'debit_card'
+  | 'boleto'
+  | 'pix'
+  | 'bank_transfer'
+  | 'crypto';
 
-export interface PlatformStatusData {
-  platform_id: string;
-  is_active: boolean;
-  uptime: number;
-  error_rate: number;
-  last_check: Date;
-  status: PlatformStatus;
-  message?: string;
+export interface Address {
+  street: string;
+  number?: string;
+  complement?: string;
+  neighborhood?: string;
+  city: string;
+  state: string;
+  country: string;
+  zipcode: string;
 }
 
 export interface Customer {
   id?: string;
   name: string;
   email: string;
-  document?: string;
   phone?: string;
+  document?: string;
   address?: {
     street?: string;
     number?: string;
@@ -81,17 +72,56 @@ export interface Customer {
     country?: string;
     zipcode?: string;
   };
+  metadata?: Record<string, unknown>;
+  created_at?: Date;
+  updated_at?: Date;
+}
+
+export interface PlatformSettings {
+  webhookUrl?: string;
+  webhookSecret?: string;
+  currency: Currency;
+  apiKey: string;
+  secretKey?: string;
+  sandbox: boolean;
+  name: string;
+  description?: string;
+  logo?: string;
+  features?: PlatformFeatures;
+  limits?: PlatformLimits;
+  credentials?: PlatformCredentials;
+  webhook?: WebhookConfig;
+  metadata?: Record<string, unknown>;
+  active?: boolean;
+}
+
+export interface PlatformConfig {
+  user_id: string;
+  platform_id: string;
+  platform_type: PaymentPlatformType;
+  settings: PlatformSettings;
+  created_at?: Date;
+  updated_at?: Date;
+}
+
+export interface PlatformStatusData {
+  platform_id: string;
+  status: TransactionStatus;
+  error_rate: number;
+  success_rate: number;
+  is_active: boolean;
+  last_checked: Date;
+  created_at: Date;
+  updated_at: Date;
+  metadata?: Record<string, any>;
 }
 
 export interface PaymentPlatform {
   id: string;
   name: string;
-  type: PaymentPlatformType;
-  settings: PlatformSettings;
-  status: PlatformStatus;
-  active: boolean;
-  created_at: Date;
-  updated_at: Date;
+  description: string;
+  status: PlatformStatusData;
+  metadata?: Record<string, any>;
 }
 
 export interface Transaction {
@@ -99,16 +129,16 @@ export interface Transaction {
   user_id: string;
   platform_id: string;
   platform_type: PaymentPlatformType;
-  platform_settings: PlatformSettings;
   order_id: string;
   amount: number;
-  currency: string;
-  status: TransactionStatus;
+  currency: Currency;
   customer: Customer;
-  payment_method: string;
-  metadata: Record<string, any>;
+  payment_method: PaymentMethod;
+  platform_settings: PlatformSettings;
+  status: TransactionStatus;
   created_at: Date;
   updated_at: Date;
+  metadata?: Record<string, any>;
 }
 
 export interface AvailablePlatform {
@@ -117,6 +147,14 @@ export interface AvailablePlatform {
   platform: PaymentPlatformType;
   logo: string;
   description?: string;
+  features?: PlatformFeatures;
+  limits?: PlatformLimits;
+  pricing?: {
+    setup_fee?: number;
+    transaction_fee?: number;
+    monthly_fee?: number;
+    currency: Currency;
+  };
 }
 
 export interface PlatformIntegration {
@@ -125,6 +163,9 @@ export interface PlatformIntegration {
   user_id: string;
   settings: PlatformSettings;
   status: PlatformStatusData;
+  features?: PlatformFeatures;
+  limits?: PlatformLimits;
+  metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -136,6 +177,11 @@ export interface PaymentPlatformStats {
   averageOrderValue: number;
   refundRate: number;
   chargebackRate: number;
+  period: {
+    start: Date;
+    end: Date;
+  };
+  currency: Currency;
 }
 
 export interface PlatformCredentials {
@@ -143,12 +189,21 @@ export interface PlatformCredentials {
   secretKey?: string;
   clientId?: string;
   clientSecret?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: Date;
+  metadata?: Record<string, unknown>;
 }
 
 export interface WebhookConfig {
   url: string;
   secret?: string;
   events?: string[];
+  retryPolicy?: {
+    maxAttempts: number;
+    backoffDelay: number;
+  };
+  metadata?: Record<string, unknown>;
 }
 
 export interface PlatformFeatures {
@@ -160,6 +215,7 @@ export interface PlatformFeatures {
   productCatalog: boolean;
   orderManagement: boolean;
   reporting: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 export interface PlatformLimits {
@@ -168,6 +224,8 @@ export interface PlatformLimits {
   maxRefundPeriod?: number;
   maxWebhookRetries?: number;
   maxConcurrentRequests?: number;
+  currency?: Currency;
+  metadata?: Record<string, unknown>;
 }
 
 export interface PlatformMetrics {
@@ -177,4 +235,10 @@ export interface PlatformMetrics {
   averageTransactionValue: number;
   refundRate: number;
   chargebackRate: number;
+  period: {
+    start: Date;
+    end: Date;
+  };
+  currency: Currency;
+  metadata?: Record<string, unknown>;
 } 

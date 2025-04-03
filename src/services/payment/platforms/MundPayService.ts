@@ -1,185 +1,250 @@
-import { PaymentPlatformService } from '../PaymentPlatformService';
-import { Transaction } from '../../../types/payment';
+import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
+import { BasePlatformService } from './BasePlatformService';
+import axios from 'axios';
 
-export class MundPayService extends PaymentPlatformService {
-  private baseUrl: string;
-  private headers: HeadersInit;
-
-  constructor(apiKey: string, secretKey: string, sandbox: boolean = true) {
-    super();
-    this.baseUrl = sandbox
-      ? 'https://api.sandbox.mundpay.com'
-      : 'https://api.mundpay.com';
-    this.headers = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'X-Account-Token': secretKey,
-    };
+export class MundPayService extends BasePlatformService {
+  getSandboxApiUrl(): string {
+    return 'https://sandbox.mundpay.com/api/v1';
   }
 
-  async fetchOrders(): Promise<Transaction[]> {
-    try {
-      const response = await fetch(`${this.baseUrl}/v2/orders`, {
-        headers: this.headers,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return data.orders.map(this.mapOrderToTransaction);
-    } catch (error) {
-      console.error('Erro ao buscar pedidos do MundPay:', error);
-      throw error;
-    }
+  getProductionApiUrl(): string {
+    return 'https://api.mundpay.com/api/v1';
   }
 
-  private mapOrderToTransaction(order: any): Transaction {
+  protected getHeaders(): Record<string, string> {
     return {
-      id: order.id.toString(),
-      platformId: 'mundpay',
-      orderId: order.reference_id,
-      amount: order.amount,
-      currency: order.currency || 'BRL',
-      status: this.mapStatus(order.status),
-      customer: {
-        name: order.customer.full_name,
-        email: order.customer.email,
-        phone: order.customer.phone,
-        document: order.customer.document,
-      },
-      product: {
-        id: order.items[0].id,
-        name: order.items[0].name,
-        price: order.items[0].unit_amount,
-        quantity: order.items[0].quantity,
-      },
-      paymentMethod: order.payment_method.type,
-      createdAt: new Date(order.created_at),
-      updatedAt: new Date(order.updated_at),
-      metadata: {
-        items: order.items,
-        payment: {
-          installments: order.payment_method.installments,
-          installmentAmount: order.payment_method.installment_amount,
-          paymentLink: order.payment_method.payment_link,
-          pixQrCode: order.payment_method.pix?.qr_code,
-          pixKey: order.payment_method.pix?.key,
-          boletoUrl: order.payment_method.boleto?.url,
-          boletoBarcode: order.payment_method.boleto?.barcode,
-          cardBrand: order.payment_method.card?.brand,
-          cardLastFour: order.payment_method.card?.last4,
-        },
-        customer: {
-          address: {
-            street: order.customer.address.street,
-            number: order.customer.address.number,
-            complement: order.customer.address.complement,
-            neighborhood: order.customer.address.neighborhood,
-            city: order.customer.address.city,
-            state: order.customer.address.state,
-            zipcode: order.customer.address.postal_code,
-            country: order.customer.address.country,
-          },
-        },
-        affiliate: {
-          id: order.affiliate?.id,
-          name: order.affiliate?.name,
-          commission: order.affiliate?.commission,
-          commissionAmount: order.affiliate?.commission_amount,
-        },
-        split: {
-          rules: order.split_rules,
-          totalAmount: order.split_amount,
-        },
-        antifraud: {
-          score: order.antifraud?.score,
-          status: order.antifraud?.status,
-          recommendation: order.antifraud?.recommendation,
-          reasons: order.antifraud?.reasons,
-        },
-      },
+      'Content-Type': 'application/json',
+      'X-API-Key': this.config.settings.apiKey,
+      'X-Secret-Key': this.config.settings.secretKey || ''
     };
   }
 
-  private mapStatus(status: string): 'completed' | 'pending' | 'failed' {
+  protected mapStatus(status: string): TransactionStatus {
     switch (status.toLowerCase()) {
-      case 'paid':
       case 'approved':
-      case 'captured':
-      case 'completed':
-        return 'completed';
+      case 'paid':
+        return 'paid';
       case 'pending':
-      case 'waiting_payment':
-      case 'in_process':
-      case 'authorized':
         return 'pending';
-      case 'cancelled':
-      case 'refunded':
-      case 'chargeback':
-      case 'expired':
-      case 'declined':
       case 'failed':
-      default:
+      case 'declined':
         return 'failed';
+      case 'refunded':
+        return 'refunded';
+      case 'cancelled':
+        return 'cancelled';
+      case 'inactive':
+        return 'inactive';
+      default:
+        return 'error';
     }
   }
 
-  async syncTransactions(): Promise<void> {
+  async processPayment(
+    amount: number,
+    currency: Currency,
+    customer: Customer,
+    metadata?: Record<string, any>
+  ): Promise<Transaction> {
     try {
-      const orders = await this.fetchOrders();
-      for (const order of orders) {
-        await this.saveTransaction(order);
-      }
+      const response = await axios.post(
+        `${this.getApiUrl()}/payments`,
+        {
+          amount,
+          currency,
+          customer,
+          metadata
+        },
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'mundpay',
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        customer: response.data.customer,
+        payment_method: response.data.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: response.data.status as TransactionStatus,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
+      };
     } catch (error) {
-      console.error('Erro ao sincronizar transações do MundPay:', error);
-      throw error;
+      throw this.handleError(error);
     }
   }
 
-  async createWebhook(url: string): Promise<void> {
+  async processRefund(
+    transactionId: string,
+    amount: number,
+    metadata?: Record<string, any>
+  ): Promise<Transaction> {
     try {
-      const response = await fetch(`${this.baseUrl}/v2/webhooks`, {
-        method: 'POST',
-        headers: this.headers,
-        body: JSON.stringify({
-          url,
-          events: [
-            'order.created',
-            'order.paid',
-            'order.cancelled',
-            'order.refunded',
-            'order.chargeback',
-            'order.chargeback_reversed',
-            'order.expired',
-            'order.failed',
-            'affiliate.commission_paid',
-            'split.processed',
-          ],
-          active: true,
-          description: 'Webhook para integração com sistema de gestão',
-        }),
+      const response = await axios.post(
+        `${this.getApiUrl()}/refunds`,
+        {
+          transaction_id: transactionId,
+          amount,
+          metadata
+        },
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'mundpay',
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        customer: response.data.customer,
+        payment_method: response.data.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: response.data.status as TransactionStatus,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async validateWebhook(payload: Record<string, any>, signature: string): Promise<boolean> {
+    const calculatedSignature = this.calculateSignature(payload);
+    return calculatedSignature === signature;
+  }
+
+  async getTransaction(transactionId: string): Promise<Transaction> {
+    try {
+      const response = await axios.get(
+        `${this.getApiUrl()}/transactions/${transactionId}`,
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'mundpay',
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        customer: response.data.customer,
+        payment_method: response.data.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: response.data.status as TransactionStatus,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
+    try {
+      const params: Record<string, any> = {};
+      if (startDate) params.start_date = startDate.toISOString();
+      if (endDate) params.end_date = endDate.toISOString();
+
+      const response = await axios.get(`${this.getApiUrl()}/transactions`, {
+        headers: this.getHeaders(),
+        params
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+      return response.data.map((tx: any) => ({
+        id: tx.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'mundpay',
+        order_id: tx.order_id,
+        amount: tx.amount,
+        currency: tx.currency,
+        customer: tx.customer,
+        payment_method: tx.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: tx.status as TransactionStatus,
+        created_at: new Date(tx.created_at),
+        updated_at: new Date(tx.updated_at),
+        metadata: tx.metadata
+      }));
     } catch (error) {
-      console.error('Erro ao criar webhook no MundPay:', error);
-      throw error;
+      throw this.handleError(error);
     }
   }
 
-  async handleWebhook(payload: any): Promise<void> {
+  async getStatus(): Promise<PlatformStatusData> {
     try {
-      if (payload.event.startsWith('order.')) {
-        const transaction = this.mapOrderToTransaction(payload.data);
-        await this.saveTransaction(transaction);
-      }
+      const response = await axios.get(`${this.getApiUrl()}/status`, {
+        headers: this.getHeaders()
+      });
+
+      return {
+        platform_id: this.config.platform_id,
+        status: response.data.status as TransactionStatus,
+        error_rate: response.data.error_rate,
+        success_rate: response.data.success_rate,
+        is_active: response.data.is_active,
+        last_checked: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: response.data.metadata
+      };
     } catch (error) {
-      console.error('Erro ao processar webhook do MundPay:', error);
-      throw error;
+      throw this.handleError(error);
     }
+  }
+
+  async updateConfig(config: Partial<PlatformConfig>): Promise<void> {
+    Object.assign(this.config, config);
+  }
+
+  private calculateSignature(payload: Record<string, any>): string {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const data = `${this.config.settings.secretKey}${timestamp}`;
+    return require('crypto')
+      .createHmac('sha256', this.config.settings.secretKey || '')
+      .update(data)
+      .digest('hex');
   }
 } 

@@ -1,221 +1,96 @@
+import { Transaction, TransactionStatus } from '../../types/payment';
 import { supabase } from '../../lib/supabase';
-import { Transaction } from '../../types/payment';
-import { paymentLogger } from './LogService';
-import { paymentMetrics } from './MetricsService';
-import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
 
-export type ReportType = 
-  | 'daily'
-  | 'weekly'
-  | 'monthly'
-  | 'quarterly'
-  | 'yearly'
-  | 'custom';
+export type ReportFormat = 'csv' | 'json' | 'pdf';
+export type ReportType = 'transactions' | 'reconciliation' | 'metrics';
 
-export type ReportFormat = 'json' | 'csv' | 'pdf' | 'excel';
-
-export interface ReportConfig {
-  type: ReportType;
-  format: ReportFormat;
-  startDate?: string;
-  endDate?: string;
+export interface ReportFilters {
+  startDate?: Date;
+  endDate?: Date;
   platformId?: string;
-  userId?: string;
-  includeMetrics?: boolean;
-  includeTrends?: boolean;
-  includeCharts?: boolean;
+  status?: TransactionStatus;
+  minAmount?: number;
+  maxAmount?: number;
 }
 
-export interface Report {
-  id?: string;
-  config: ReportConfig;
-  data: Record<string, any>;
-  file_url?: string;
-  created_at?: string;
-  generated_at?: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
-  error?: string;
+export interface ReportData {
+  total_count: number;
+  total_amount: number;
+  transactions?: Transaction[];
+  status_counts?: Record<TransactionStatus, number>;
+  transactions_by_platform?: Record<string, {
+    count: number;
+    total_amount: number;
+    transactions: Transaction[];
+  }>;
+  platform_metrics?: Record<string, {
+    total_transactions: number;
+    total_amount: number;
+    success_rate: number;
+    average_amount: number;
+  }>;
+  time_metrics?: {
+    hourly: Record<number, { count: number; amount: number }>;
+    daily: Record<number, { count: number; amount: number }>;
+    monthly: Record<number, { count: number; amount: number }>;
+  };
 }
 
-export class PaymentReportService {
-  private readonly reportsTable = 'payment_reports';
-  private readonly transactionsTable = 'transactions';
+export class ReportService {
+  private readonly table = 'reports';
 
-  async generateReport(config: ReportConfig): Promise<Report> {
+  async generateReport(type: ReportType, format: ReportFormat, filters: ReportFilters = {}): Promise<string> {
     try {
-      // Criar registro do relatório
-      const report: Omit<Report, 'id'> = {
-        config,
-        data: {},
-        status: 'pending',
-        created_at: new Date().toISOString()
-      };
+      // Buscar dados para o relatório
+      const data = await this.fetchReportData(type, filters);
 
-      const { data: savedReport, error: saveError } = await supabase
-        .from(this.reportsTable)
-        .insert([report])
-        .select()
-        .single();
-
-      if (saveError) {
-        throw saveError;
+      // Gerar arquivo no formato especificado
+      let filePath: string;
+      switch (format) {
+        case 'csv':
+          filePath = await this.generateCSV(data, `${type}_report`);
+          break;
+        case 'json':
+          filePath = await this.generateJSON(data, `${type}_report`);
+          break;
+        case 'pdf':
+          filePath = await this.generatePDF(data, `${type}_report`);
+          break;
+        default:
+          throw new Error(`Unsupported format: ${format}`);
       }
 
-      // Iniciar geração do relatório
-      await this.updateReportStatus(savedReport.id, 'processing');
+      // Salvar registro do relatório
+      await this.saveReportRecord(type, format, filters, filePath);
 
-      const reportData = await this.processReport(config);
-
-      // Gerar arquivo do relatório no formato solicitado
-      const fileUrl = await this.generateReportFile(reportData, config.format);
-
-      // Atualizar relatório com os dados e status
-      const { error: updateError } = await supabase
-        .from(this.reportsTable)
-        .update({
-          data: reportData,
-          file_url: fileUrl,
-          status: 'completed',
-          generated_at: new Date().toISOString()
-        })
-        .eq('id', savedReport.id);
-
-      if (updateError) {
-        throw updateError;
-      }
-
-      return {
-        ...savedReport,
-        data: reportData,
-        file_url: fileUrl,
-        status: 'completed',
-        generated_at: new Date().toISOString()
-      };
-
+      return filePath;
     } catch (error) {
-      paymentLogger.error(
-        'Failed to generate report',
-        error,
-        { config }
-      );
-
-      if (error instanceof Error) {
-        await this.updateReportStatus(error.message, 'failed', error.message);
-      }
-
+      console.error('Error generating report:', error);
       throw error;
     }
   }
 
-  private async processReport(config: ReportConfig): Promise<Record<string, any>> {
-    const { startDate, endDate } = this.getDateRange(config.type, config.startDate, config.endDate);
+  private async fetchReportData(type: ReportType, filters: ReportFilters): Promise<ReportData> {
+    let query = supabase.from('transactions').select('*');
 
-    // Buscar transações do período
-    const transactions = await this.getTransactions(startDate, endDate, config.platformId, config.userId);
-
-    // Dados básicos do relatório
-    const reportData: Record<string, any> = {
-      period: {
-        start: startDate,
-        end: endDate,
-        type: config.type
-      },
-      summary: this.generateTransactionsSummary(transactions),
-      transactions: this.formatTransactions(transactions)
-    };
-
-    // Adicionar métricas se solicitado
-    if (config.includeMetrics) {
-      reportData.metrics = await paymentMetrics.calculateTransactionMetrics(
-        startDate,
-        endDate,
-        config.platformId,
-        config.userId
-      );
+    // Aplicar filtros
+    if (filters.startDate) {
+      query = query.gte('created_at', filters.startDate.toISOString());
     }
-
-    // Adicionar análise de tendências se solicitado
-    if (config.includeTrends) {
-      const days = this.getDaysForReportType(config.type);
-      reportData.trends = await paymentMetrics.analyzeTransactionTrends(days);
+    if (filters.endDate) {
+      query = query.lte('created_at', filters.endDate.toISOString());
     }
-
-    // Adicionar dados para gráficos se solicitado
-    if (config.includeCharts) {
-      reportData.charts = this.generateChartsData(transactions);
+    if (filters.platformId) {
+      query = query.eq('platform_id', filters.platformId);
     }
-
-    return reportData;
-  }
-
-  private getDateRange(type: ReportType, startDate?: string, endDate?: string): { startDate: string; endDate: string } {
-    if (type === 'custom' && startDate && endDate) {
-      return { startDate, endDate };
+    if (filters.status) {
+      query = query.eq('status', filters.status);
     }
-
-    const end = new Date();
-    let start = new Date();
-
-    switch (type) {
-      case 'daily':
-        start.setDate(start.getDate() - 1);
-        break;
-      case 'weekly':
-        start.setDate(start.getDate() - 7);
-        break;
-      case 'monthly':
-        start.setMonth(start.getMonth() - 1);
-        break;
-      case 'quarterly':
-        start.setMonth(start.getMonth() - 3);
-        break;
-      case 'yearly':
-        start.setFullYear(start.getFullYear() - 1);
-        break;
+    if (filters.minAmount) {
+      query = query.gte('amount', filters.minAmount);
     }
-
-    return {
-      startDate: start.toISOString(),
-      endDate: end.toISOString()
-    };
-  }
-
-  private getDaysForReportType(type: ReportType): number {
-    switch (type) {
-      case 'daily':
-        return 1;
-      case 'weekly':
-        return 7;
-      case 'monthly':
-        return 30;
-      case 'quarterly':
-        return 90;
-      case 'yearly':
-        return 365;
-      default:
-        return 30;
-    }
-  }
-
-  private async getTransactions(
-    startDate: string,
-    endDate: string,
-    platformId?: string,
-    userId?: string
-  ): Promise<Transaction[]> {
-    let query = supabase
-      .from(this.transactionsTable)
-      .select('*')
-      .gte('created_at', startDate)
-      .lte('created_at', endDate);
-
-    if (platformId) {
-      query = query.eq('platform_id', platformId);
-    }
-
-    if (userId) {
-      query = query.eq('user_id', userId);
+    if (filters.maxAmount) {
+      query = query.lte('amount', filters.maxAmount);
     }
 
     const { data, error } = await query;
@@ -224,171 +99,190 @@ export class PaymentReportService {
       throw error;
     }
 
-    return data;
+    const transactions = data as Transaction[];
+
+    switch (type) {
+      case 'transactions':
+        return this.processTransactionData(transactions);
+      case 'reconciliation':
+        return this.processReconciliationData(transactions);
+      case 'metrics':
+        return this.processMetricsData(transactions);
+      default:
+        throw new Error(`Unsupported report type: ${type}`);
+    }
   }
 
-  private generateTransactionsSummary(transactions: Transaction[]): Record<string, any> {
+  private async generateCSV(data: ReportData, fileName: string): Promise<string> {
+    // Implementar geração de arquivo CSV
+    return `reports/${fileName}.csv`;
+  }
+
+  private async generateJSON(data: ReportData, fileName: string): Promise<string> {
+    // Implementar geração de arquivo JSON
+    return `reports/${fileName}.json`;
+  }
+
+  private async generatePDF(data: ReportData, fileName: string): Promise<string> {
+    // Implementar geração de arquivo PDF
+    return `reports/${fileName}.pdf`;
+  }
+
+  private async saveReportRecord(type: ReportType, format: ReportFormat, filters: ReportFilters, filePath: string): Promise<void> {
+    const { error } = await supabase
+      .from(this.table)
+      .insert({
+        type,
+        format,
+        filters,
+        file_path: filePath,
+        created_at: new Date()
+      });
+
+    if (error) {
+      throw error;
+    }
+  }
+
+  private processTransactionData(transactions: Transaction[]): ReportData {
     return {
       total_count: transactions.length,
-      total_amount: transactions.reduce((sum, tx) => sum + (tx.amount || 0), 0),
-      status_breakdown: this.groupTransactionsByStatus(transactions),
-      payment_methods: this.groupTransactionsByPaymentMethod(transactions)
+      total_amount: transactions.reduce((sum, tx) => sum + tx.amount, 0),
+      transactions
     };
   }
 
-  private groupTransactionsByStatus(transactions: Transaction[]): Record<string, number> {
-    return transactions.reduce((acc, tx) => {
-      acc[tx.status] = (acc[tx.status] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-  }
-
-  private groupTransactionsByPaymentMethod(transactions: Transaction[]): Record<string, number> {
-    return transactions.reduce((acc, tx) => {
-      if (tx.payment_method) {
-        acc[tx.payment_method] = (acc[tx.payment_method] || 0) + 1;
-      }
-      return acc;
-    }, {} as Record<string, number>);
-  }
-
-  private formatTransactions(transactions: Transaction[]): Record<string, any>[] {
-    return transactions.map(tx => ({
-      id: tx.id,
-      order_id: tx.order_id,
-      amount: tx.amount,
-      currency: tx.currency,
-      status: tx.status,
-      payment_method: tx.payment_method,
-      customer: tx.customer,
-      created_at: format(new Date(tx.created_at), 'PPpp', { locale: ptBR }),
-      platform_id: tx.platform_id
-    }));
-  }
-
-  private generateChartsData(transactions: Transaction[]): Record<string, any> {
-    const dailyVolume = this.calculateDailyVolume(transactions);
-    const statusDistribution = this.groupTransactionsByStatus(transactions);
-    const paymentMethodDistribution = this.groupTransactionsByPaymentMethod(transactions);
+  private processReconciliationData(transactions: Transaction[]): ReportData {
+    const statusCounts = transactions.reduce((counts, tx) => {
+      counts[tx.status] = (counts[tx.status] || 0) + 1;
+      return counts;
+    }, {} as Record<TransactionStatus, number>);
 
     return {
-      daily_volume: dailyVolume,
-      status_distribution: statusDistribution,
-      payment_method_distribution: paymentMethodDistribution
+      total_count: transactions.length,
+      status_counts: statusCounts,
+      total_amount: transactions.reduce((sum, tx) => sum + tx.amount, 0),
+      transactions_by_platform: this.groupTransactionsByPlatform(transactions)
     };
   }
 
-  private calculateDailyVolume(transactions: Transaction[]): Record<string, any>[] {
-    const dailyVolume = transactions.reduce((acc, tx) => {
-      const date = format(new Date(tx.created_at), 'yyyy-MM-dd');
-      if (!acc[date]) {
-        acc[date] = {
+  private processMetricsData(transactions: Transaction[]): ReportData {
+    const platform_metrics = this.calculatePlatformMetrics(transactions);
+    const time_metrics = this.calculateTimeMetrics(transactions);
+
+    return {
+      total_count: transactions.length,
+      total_amount: transactions.reduce((sum, tx) => sum + tx.amount, 0),
+      platform_metrics,
+      time_metrics
+    };
+  }
+
+  private groupTransactionsByPlatform(transactions: Transaction[]): Record<string, {
+    count: number;
+    total_amount: number;
+    transactions: Transaction[];
+  }> {
+    return transactions.reduce((groups, tx) => {
+      if (!groups[tx.platform_id]) {
+        groups[tx.platform_id] = {
           count: 0,
-          amount: 0
+          total_amount: 0,
+          transactions: []
         };
       }
-      acc[date].count++;
-      acc[date].amount += tx.amount || 0;
-      return acc;
-    }, {} as Record<string, { count: number; amount: number }>);
 
-    return Object.entries(dailyVolume).map(([date, data]) => ({
-      date,
-      ...data
-    }));
+      groups[tx.platform_id].count++;
+      groups[tx.platform_id].total_amount += tx.amount;
+      groups[tx.platform_id].transactions.push(tx);
+
+      return groups;
+    }, {} as Record<string, {
+      count: number;
+      total_amount: number;
+      transactions: Transaction[];
+    }>);
   }
 
-  private async generateReportFile(data: Record<string, any>, format: ReportFormat): Promise<string> {
-    // TODO: Implementar geração de arquivos nos formatos solicitados
-    // Por enquanto, apenas simula a geração retornando uma URL fictícia
-    return `https://storage.example.com/reports/${Date.now()}.${format}`;
+  private calculatePlatformMetrics(transactions: Transaction[]): Record<string, {
+    total_transactions: number;
+    total_amount: number;
+    success_rate: number;
+    average_amount: number;
+  }> {
+    const metrics: Record<string, {
+      total_transactions: number;
+      total_amount: number;
+      success_rate: number;
+      average_amount: number;
+    }> = {};
+
+    for (const tx of transactions) {
+      if (!metrics[tx.platform_id]) {
+        metrics[tx.platform_id] = {
+          total_transactions: 0,
+          total_amount: 0,
+          success_rate: 0,
+          average_amount: 0
+        };
+      }
+
+      metrics[tx.platform_id].total_transactions++;
+      metrics[tx.platform_id].total_amount += tx.amount;
+      if (tx.status === 'completed') {
+        metrics[tx.platform_id].success_rate++;
+      }
+    }
+
+    // Calcular médias e taxas
+    for (const platformId in metrics) {
+      const platform = metrics[platformId];
+      platform.success_rate = (platform.success_rate / platform.total_transactions) * 100;
+      platform.average_amount = platform.total_amount / platform.total_transactions;
+    }
+
+    return metrics;
   }
 
-  private async updateReportStatus(
-    reportId: string,
-    status: Report['status'],
-    error?: string
-  ): Promise<void> {
-    const { error: updateError } = await supabase
-      .from(this.reportsTable)
-      .update({
-        status,
-        error,
-        ...(status === 'completed' ? { generated_at: new Date().toISOString() } : {})
-      })
-      .eq('id', reportId);
+  private calculateTimeMetrics(transactions: Transaction[]): {
+    hourly: Record<number, { count: number; amount: number }>;
+    daily: Record<number, { count: number; amount: number }>;
+    monthly: Record<number, { count: number; amount: number }>;
+  } {
+    const timeMetrics = {
+      hourly: {} as Record<number, { count: number; amount: number }>,
+      daily: {} as Record<number, { count: number; amount: number }>,
+      monthly: {} as Record<number, { count: number; amount: number }>
+    };
 
-    if (updateError) {
-      throw updateError;
-    }
-  }
+    for (const tx of transactions) {
+      const date = new Date(tx.created_at);
+      const hour = date.getHours();
+      const day = date.getDate();
+      const month = date.getMonth() + 1;
 
-  async getReport(reportId: string): Promise<Report> {
-    const { data, error } = await supabase
-      .from(this.reportsTable)
-      .select('*')
-      .eq('id', reportId)
-      .single();
+      // Métricas por hora
+      if (!timeMetrics.hourly[hour]) {
+        timeMetrics.hourly[hour] = { count: 0, amount: 0 };
+      }
+      timeMetrics.hourly[hour].count++;
+      timeMetrics.hourly[hour].amount += tx.amount;
 
-    if (error) {
-      throw error;
-    }
+      // Métricas por dia
+      if (!timeMetrics.daily[day]) {
+        timeMetrics.daily[day] = { count: 0, amount: 0 };
+      }
+      timeMetrics.daily[day].count++;
+      timeMetrics.daily[day].amount += tx.amount;
 
-    return data;
-  }
-
-  async listReports(
-    type?: ReportType,
-    status?: Report['status'],
-    limit: number = 100
-  ): Promise<Report[]> {
-    let query = supabase
-      .from(this.reportsTable)
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-
-    if (type) {
-      query = query.eq('config->type', type);
+      // Métricas por mês
+      if (!timeMetrics.monthly[month]) {
+        timeMetrics.monthly[month] = { count: 0, amount: 0 };
+      }
+      timeMetrics.monthly[month].count++;
+      timeMetrics.monthly[month].amount += tx.amount;
     }
 
-    if (status) {
-      query = query.eq('status', status);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      throw error;
-    }
-
-    return data;
-  }
-
-  async deleteReport(reportId: string): Promise<void> {
-    const { error } = await supabase
-      .from(this.reportsTable)
-      .delete()
-      .eq('id', reportId);
-
-    if (error) {
-      throw error;
-    }
-  }
-
-  async cleanupOldReports(days: number = 30): Promise<void> {
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - days);
-
-    const { error } = await supabase
-      .from(this.reportsTable)
-      .delete()
-      .lt('created_at', cutoffDate.toISOString());
-
-    if (error) {
-      throw error;
-    }
+    return timeMetrics;
   }
 }
-
-export const paymentReporter = new PaymentReportService();

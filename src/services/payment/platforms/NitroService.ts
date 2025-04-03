@@ -1,170 +1,229 @@
-import { Transaction } from '../../../types/payment';
+import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
 import { BasePlatformService } from './BasePlatformService';
+import axios from 'axios';
 
 export class NitroService extends BasePlatformService {
-  private readonly SANDBOX_API_URL = 'https://sandbox.api.nitropay.com.br/v1';
-  private readonly PRODUCTION_API_URL = 'https://api.nitropay.com.br/v1';
-
-  constructor(platformId: string, apiKey: string, secretKey?: string, sandbox: boolean = true) {
-    super(platformId, apiKey, secretKey, sandbox);
+  getSandboxApiUrl(): string {
+    return 'https://sandbox.nitro.com/api/v1';
   }
 
-  protected getSandboxApiUrl(): string {
-    return this.SANDBOX_API_URL;
-  }
-
-  protected getProductionApiUrl(): string {
-    return this.PRODUCTION_API_URL;
+  getProductionApiUrl(): string {
+    return 'https://api.nitro.com/api/v1';
   }
 
   protected getHeaders(): Record<string, string> {
     return {
-      ...super.getHeaders(),
-      'X-Nitro-Key': this.apiKey,
-      'X-Nitro-Signature': this.generateSignature()
+      'Content-Type': 'application/json',
+      'X-API-Key': this.config.settings.apiKey,
+      'X-Secret-Key': this.config.settings.secretKey || ''
     };
   }
 
-  async processPayment(amount: number, currency: string, customer: Transaction['customer'], metadata?: Record<string, any>): Promise<Transaction> {
-    this.validateApiKey();
-
+  async processPayment(
+    amount: number,
+    currency: Currency,
+    customer: Customer,
+    metadata?: Record<string, any>
+  ): Promise<Transaction> {
     try {
-      const response = await fetch(`${this.getApiUrl()}/transactions`, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify({
+      const response = await axios.post(
+        `${this.getApiUrl()}/payments`,
+        {
           amount,
           currency,
-          customer: {
-            name: customer.name,
-            email: customer.email,
-            phone: customer.phone,
-            document: customer.document,
-            address: metadata?.address
-          },
-          product: {
-            id: metadata?.productId,
-            name: metadata?.productName,
-            price: amount,
-            quantity: metadata?.quantity || 1
-          },
-          payment: {
-            method: metadata?.paymentMethod || 'credit_card',
-            installments: metadata?.installments || 1,
-            card: metadata?.card
-          },
-          notification_url: metadata?.notificationUrl,
-          ...metadata
-        })
-      });
+          customer,
+          metadata
+        },
+        { headers: this.getHeaders() }
+      );
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      const transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'> = {
-        platform_id: this.platformId,
-        order_id: data.transaction_id,
-        amount,
-        currency,
-        status: this.mapStatus(data.status),
-        customer,
-        payment_method: data.payment_method,
-        metadata: {
-          ...metadata,
-          nitro_id: data.id,
-          payment_url: data.payment_url,
-          invoice_url: data.invoice_url,
-          boleto_url: data.boleto_url,
-          pix_qrcode: data.pix_qrcode,
-          pix_code: data.pix_code,
-          installments: data.installments,
-          installment_amount: data.installment_amount,
-          affiliate: data.affiliate,
-          commission: data.commission,
-          producer: data.producer,
-          producer_commission: data.producer_commission,
-          antifraud_score: data.antifraud_score,
-          risk_level: data.risk_level
-        }
+      return {
+        id: response.data.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'nitro',
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        customer: response.data.customer,
+        payment_method: response.data.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: response.data.status as TransactionStatus,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
       };
-
-      return this.saveTransaction(transaction);
     } catch (error) {
-      return this.handleApiError(error);
+      throw this.handleError(error);
     }
   }
 
-  async processRefund(transactionId: string): Promise<boolean> {
-    this.validateApiKey();
-
+  async processRefund(
+    transactionId: string,
+    amount: number,
+    metadata?: Record<string, any>
+  ): Promise<Transaction> {
     try {
-      const response = await fetch(`${this.getApiUrl()}/transactions/${transactionId}/refund`, {
-        method: 'POST',
-        headers: this.getHeaders()
-      });
+      const response = await axios.post(
+        `${this.getApiUrl()}/refunds`,
+        {
+          transaction_id: transactionId,
+          amount,
+          metadata
+        },
+        { headers: this.getHeaders() }
+      );
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      if (data.success) {
-        await this.updateTransactionStatus(transactionId, 'refunded');
-        return true;
-      }
-
-      return false;
+      return {
+        id: response.data.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'nitro',
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        customer: response.data.customer,
+        payment_method: response.data.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: response.data.status as TransactionStatus,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
+      };
     } catch (error) {
-      return this.handleApiError(error);
+      throw this.handleError(error);
     }
   }
 
-  validateWebhook(payload: any, signature: string): boolean {
-    this.validateSecretKey();
+  async validateWebhook(payload: Record<string, any>, signature: string): Promise<boolean> {
     const calculatedSignature = this.calculateSignature(payload);
     return calculatedSignature === signature;
   }
 
-  private calculateSignature(payload: any): string {
-    const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
-    return require('crypto')
-      .createHmac('sha256', this.secretKey!)
-      .update(data)
-      .digest('hex');
+  async getTransaction(transactionId: string): Promise<Transaction> {
+    try {
+      const response = await axios.get(
+        `${this.getApiUrl()}/transactions/${transactionId}`,
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'nitro',
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        customer: response.data.customer,
+        payment_method: response.data.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: response.data.status as TransactionStatus,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
   }
 
-  private generateSignature(): string {
+  async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
+    try {
+      const params: Record<string, any> = {};
+      if (startDate) params.start_date = startDate.toISOString();
+      if (endDate) params.end_date = endDate.toISOString();
+
+      const response = await axios.get(`${this.getApiUrl()}/transactions`, {
+        headers: this.getHeaders(),
+        params
+      });
+
+      return response.data.map((tx: any) => ({
+        id: tx.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'nitro',
+        order_id: tx.order_id,
+        amount: tx.amount,
+        currency: tx.currency,
+        customer: tx.customer,
+        payment_method: tx.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: tx.status as TransactionStatus,
+        created_at: new Date(tx.created_at),
+        updated_at: new Date(tx.updated_at),
+        metadata: tx.metadata
+      }));
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async getStatus(): Promise<PlatformStatusData> {
+    try {
+      const response = await axios.get(`${this.getApiUrl()}/status`, {
+        headers: this.getHeaders()
+      });
+
+      return {
+        platform_id: this.config.platform_id,
+        status: response.data.status as TransactionStatus,
+        error_rate: response.data.error_rate,
+        success_rate: response.data.success_rate,
+        is_active: response.data.is_active,
+        last_checked: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: response.data.metadata
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async updateConfig(config: Partial<PlatformConfig>): Promise<void> {
+    Object.assign(this.config, config);
+  }
+
+  private calculateSignature(payload: Record<string, any>): string {
     const timestamp = Math.floor(Date.now() / 1000).toString();
-    const data = `${this.apiKey}${timestamp}`;
+    const data = `${this.config.settings.secretKey}${timestamp}`;
     return require('crypto')
-      .createHmac('sha256', this.secretKey!)
+      .createHmac('sha256', this.config.settings.secretKey || '')
       .update(data)
       .digest('hex');
-  }
-
-  private mapStatus(status: string): Transaction['status'] {
-    const statusMap: Record<string, Transaction['status']> = {
-      'approved': 'completed',
-      'pending': 'pending',
-      'processing': 'processing',
-      'failed': 'failed',
-      'refunded': 'refunded',
-      'partially_refunded': 'refunded',
-      'cancelled': 'cancelled',
-      'expired': 'failed',
-      'chargeback': 'failed',
-      'dispute': 'processing',
-      'waiting_payment': 'pending',
-      'analysis': 'processing',
-      'fraud_analysis': 'processing',
-      'high_risk': 'failed',
-      'blocked': 'failed'
-    };
-
-    return statusMap[status.toLowerCase()] || 'pending';
   }
 } 

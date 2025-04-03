@@ -1,5 +1,5 @@
 import { supabase } from '../../lib/supabase';
-import { Transaction } from '../../types/payment';
+import { Transaction, PaymentPlatform, PlatformConfig } from '../../types/payment';
 import { paymentLogger } from './LogService';
 import { paymentAuditor } from './AuditService';
 import { getPlatformService } from './platforms';
@@ -37,397 +37,149 @@ export interface ReconciliationReport {
   }>;
 }
 
-export class PaymentReconciliationService {
-  private readonly reconciliationsTable = 'payment_reconciliations';
-  private readonly transactionsTable = 'transactions';
+export interface ReconciliationResult {
+  platformId: string;
+  startDate: Date;
+  endDate: Date;
+  totalTransactions: number;
+  matchedTransactions: number;
+  unmatchedTransactions: number;
+  missingTransactions: number;
+  totalAmount: number;
+  matchedAmount: number;
+  unmatchedAmount: number;
+  missingAmount: number;
+  errors: string[];
+}
 
-  async reconcileTransactions(
-    startDate: string,
-    endDate: string,
-    platformId?: string
-  ): Promise<ReconciliationReport> {
+export class ReconciliationService {
+  private readonly table = 'reconciliation_results';
+
+  async reconcile(platform: PlatformConfig, startDate: Date, endDate: Date): Promise<ReconciliationResult> {
     try {
-      // Buscar transações locais
-      const localTransactions = await this.getLocalTransactions(startDate, endDate, platformId);
+      // Buscar transações do banco de dados
+      const { data: dbTransactions, error: dbError } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('platform_id', platform.platformId)
+        .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString());
 
-      // Inicializar contadores para o relatório
-      const summary = {
-        total_transactions: localTransactions.length,
-        matched_transactions: 0,
-        mismatched_transactions: 0,
-        pending_transactions: 0,
-        match_rate: 0
-      };
+      if (dbError) {
+        throw new Error(`Failed to fetch database transactions: ${dbError.message}`);
+      }
 
-      const discrepancies: ReconciliationReport['discrepancies'] = [];
+      // Buscar transações da plataforma
+      const platformTransactions = await this.fetchPlatformTransactions(platform, startDate, endDate);
 
-      // Processar cada transação
-      for (const transaction of localTransactions) {
-        const reconciliationItem = await this.reconcileTransaction(transaction);
+      // Calcular resultados
+      const result = this.calculateReconciliationResult(
+        platform.platformId,
+        startDate,
+        endDate,
+        dbTransactions || [],
+        platformTransactions
+      );
 
-        // Atualizar contadores
-        switch (reconciliationItem.status) {
-          case 'matched':
-            summary.matched_transactions++;
-            break;
-          case 'mismatched':
-            summary.mismatched_transactions++;
-            if (reconciliationItem.discrepancies) {
-              discrepancies.push({
-                transaction_id: transaction.id!,
-                platform_id: transaction.platform_id,
-                type: 'data_mismatch',
-                details: reconciliationItem.discrepancies
-              });
-            }
-            break;
-          case 'pending':
-            summary.pending_transactions++;
-            break;
+      // Salvar resultado
+      await this.saveReconciliationResult(platform.platformId, result);
+
+      return result;
+    } catch (error) {
+      throw new Error(`Failed to reconcile transactions: ${(error as Error).message}`);
+    }
+  }
+
+  private calculateReconciliationResult(
+    platformId: string,
+    startDate: Date,
+    endDate: Date,
+    dbTransactions: Transaction[],
+    platformTransactions: Transaction[]
+  ): ReconciliationResult {
+    const dbTransactionMap = new Map(dbTransactions.map(t => [t.order_id, t]));
+    const platformTransactionMap = new Map(platformTransactions.map(t => [t.order_id, t]));
+
+    let matchedTransactions = 0;
+    let unmatchedTransactions = 0;
+    let missingTransactions = 0;
+    let matchedAmount = 0;
+    let unmatchedAmount = 0;
+    let missingAmount = 0;
+    const errors: string[] = [];
+
+    // Verificar transações do banco de dados
+    for (const [orderId, dbTransaction] of dbTransactionMap) {
+      const platformTransaction = platformTransactionMap.get(orderId);
+      if (platformTransaction) {
+        if (dbTransaction.amount === platformTransaction.amount) {
+          matchedTransactions++;
+          matchedAmount += dbTransaction.amount;
+        } else {
+          unmatchedTransactions++;
+          unmatchedAmount += Math.abs(dbTransaction.amount - platformTransaction.amount);
+          errors.push(`Amount mismatch for order ${orderId}: DB=${dbTransaction.amount}, Platform=${platformTransaction.amount}`);
         }
+      } else {
+        missingTransactions++;
+        missingAmount += dbTransaction.amount;
+        errors.push(`Transaction ${orderId} exists in DB but not in platform`);
       }
-
-      // Calcular taxa de correspondência
-      summary.match_rate = summary.total_transactions > 0
-        ? (summary.matched_transactions / summary.total_transactions) * 100
-        : 0;
-
-      return {
-        period: { start: startDate, end: endDate },
-        summary,
-        discrepancies
-      };
-
-    } catch (error) {
-      paymentLogger.error(
-        'Failed to reconcile transactions',
-        error,
-        { startDate, endDate, platformId }
-      );
-      throw error;
-    }
-  }
-
-  private async getLocalTransactions(
-    startDate: string,
-    endDate: string,
-    platformId?: string
-  ): Promise<Transaction[]> {
-    let query = supabase
-      .from(this.transactionsTable)
-      .select('*')
-      .gte('created_at', startDate)
-      .lte('created_at', endDate);
-
-    if (platformId) {
-      query = query.eq('platform_id', platformId);
     }
 
-    const { data, error } = await query;
-
-    if (error) {
-      throw error;
+    // Verificar transações da plataforma que não estão no banco
+    for (const [orderId, platformTransaction] of platformTransactionMap) {
+      if (!dbTransactionMap.has(orderId)) {
+        missingTransactions++;
+        missingAmount += platformTransaction.amount;
+        errors.push(`Transaction ${orderId} exists in platform but not in DB`);
+      }
     }
 
-    return data;
-  }
-
-  private async reconcileTransaction(transaction: Transaction): Promise<ReconciliationItem> {
-    try {
-      // Buscar dados da plataforma
-      const platformService = getPlatformService(transaction.platform_type, {
-        apiKey: transaction.platform_settings.apiKey,
-        secretKey: transaction.platform_settings.secretKey,
-        sandbox: transaction.platform_settings.sandbox || false
-      });
-
-      const platformData = await platformService.getTransaction(transaction.order_id);
-
-      // Comparar dados
-      const discrepancies = this.compareTransactionData(transaction, platformData);
-
-      // Determinar status
-      const status = Object.keys(discrepancies).length === 0 ? 'matched' : 'mismatched';
-
-      // Criar ou atualizar item de reconciliação
-      const reconciliationItem: Omit<ReconciliationItem, 'id' | 'created_at' | 'updated_at'> = {
-        transaction_id: transaction.id!,
-        platform_id: transaction.platform_id,
-        local_data: this.sanitizeTransactionData(transaction),
-        platform_data: this.sanitizeTransactionData(platformData),
-        discrepancies,
-        status
-      };
-
-      const { data: savedItem, error } = await supabase
-        .from(this.reconciliationsTable)
-        .upsert([reconciliationItem], {
-          onConflict: 'transaction_id',
-          ignoreDuplicates: false
-        })
-        .select()
-        .single();
-
-      if (error) {
-        throw error;
-      }
-
-      // Se houver discrepâncias, registrar na auditoria
-      if (status === 'mismatched') {
-        await paymentAuditor.log(
-          'payment.reconciliation' as any,
-          'transaction',
-          transaction.id!,
-          {
-            discrepancies,
-            platform_data: platformData
-          },
-          {
-            platform_id: transaction.platform_id
-          }
-        );
-      }
-
-      return savedItem;
-
-    } catch (error) {
-      paymentLogger.error(
-        'Failed to reconcile transaction',
-        error,
-        { transaction_id: transaction.id }
-      );
-
-      // Em caso de erro, criar item de reconciliação pendente
-      const reconciliationItem: Omit<ReconciliationItem, 'id' | 'created_at' | 'updated_at'> = {
-        transaction_id: transaction.id!,
-        platform_id: transaction.platform_id,
-        local_data: this.sanitizeTransactionData(transaction),
-        platform_data: {},
-        discrepancies: {},
-        status: 'pending'
-      };
-
-      const { data: savedItem, error: saveError } = await supabase
-        .from(this.reconciliationsTable)
-        .upsert([reconciliationItem], {
-          onConflict: 'transaction_id',
-          ignoreDuplicates: false
-        })
-        .select()
-        .single();
-
-      if (saveError) {
-        throw saveError;
-      }
-
-      return savedItem;
-    }
-  }
-
-  private compareTransactionData(
-    localData: Transaction,
-    platformData: Record<string, any>
-  ): Record<string, any> {
-    const discrepancies: Record<string, any> = {};
-
-    // Campos a serem comparados
-    const fieldsToCompare = {
-      amount: 'amount',
-      currency: 'currency',
-      status: 'status',
-      payment_method: 'payment_method'
+    return {
+      platformId,
+      startDate,
+      endDate,
+      totalTransactions: dbTransactions.length + platformTransactions.length,
+      matchedTransactions,
+      unmatchedTransactions,
+      missingTransactions,
+      totalAmount: dbTransactions.reduce((sum, t) => sum + t.amount, 0),
+      matchedAmount,
+      unmatchedAmount,
+      missingAmount,
+      errors
     };
-
-    // Comparar campos
-    for (const [localField, platformField] of Object.entries(fieldsToCompare)) {
-      if (localData[localField] !== platformData[platformField]) {
-        discrepancies[localField] = {
-          local: localData[localField],
-          platform: platformData[platformField]
-        };
-      }
-    }
-
-    // Comparar dados do cliente
-    if (localData.customer && platformData.customer) {
-      const customerDiscrepancies = this.compareCustomerData(
-        localData.customer,
-        platformData.customer
-      );
-      if (Object.keys(customerDiscrepancies).length > 0) {
-        discrepancies.customer = customerDiscrepancies;
-      }
-    }
-
-    return discrepancies;
   }
 
-  private compareCustomerData(
-    localCustomer: Record<string, any>,
-    platformCustomer: Record<string, any>
-  ): Record<string, any> {
-    const discrepancies: Record<string, any> = {};
-    const fieldsToCompare = ['name', 'email', 'phone', 'document'];
-
-    for (const field of fieldsToCompare) {
-      if (localCustomer[field] !== platformCustomer[field]) {
-        discrepancies[field] = {
-          local: localCustomer[field],
-          platform: platformCustomer[field]
-        };
-      }
-    }
-
-    return discrepancies;
-  }
-
-  private sanitizeTransactionData(data: Record<string, any>): Record<string, any> {
-    // Remover campos sensíveis e desnecessários
-    const sanitized = { ...data };
-    delete sanitized.platform_settings;
-    delete sanitized.metadata?.platform_settings;
-    delete sanitized.metadata?.sensitive_data;
-    return sanitized;
-  }
-
-  async resolveDiscrepancy(
-    transactionId: string,
-    resolution: string,
-    updates?: Record<string, any>
-  ): Promise<void> {
-    try {
-      // Atualizar item de reconciliação
-      const { error: reconciliationError } = await supabase
-        .from(this.reconciliationsTable)
-        .update({
-          status: 'resolved',
-          resolution,
-          updated_at: new Date().toISOString()
-        })
-        .eq('transaction_id', transactionId);
-
-      if (reconciliationError) {
-        throw reconciliationError;
-      }
-
-      // Se houver atualizações para aplicar
-      if (updates) {
-        const { error: transactionError } = await supabase
-          .from(this.transactionsTable)
-          .update(updates)
-          .eq('id', transactionId);
-
-        if (transactionError) {
-          throw transactionError;
-        }
-
-        // Registrar na auditoria
-        await paymentAuditor.log(
-          'payment.reconciliation.resolved' as any,
-          'transaction',
-          transactionId,
-          {
-            resolution,
-            updates
-          }
-        );
-      }
-
-    } catch (error) {
-      paymentLogger.error(
-        'Failed to resolve discrepancy',
-        error,
-        { transactionId, resolution, updates }
-      );
-      throw error;
-    }
-  }
-
-  async getReconciliationStatus(
-    transactionId: string
-  ): Promise<ReconciliationItem | null> {
-    const { data, error } = await supabase
-      .from(this.reconciliationsTable)
-      .select('*')
-      .eq('transaction_id', transactionId)
-      .single();
-
-    if (error) {
-      throw error;
-    }
-
-    return data;
-  }
-
-  async getPendingReconciliations(
-    platformId?: string,
-    limit: number = 100
-  ): Promise<ReconciliationItem[]> {
-    let query = supabase
-      .from(this.reconciliationsTable)
-      .select('*')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-
-    if (platformId) {
-      query = query.eq('platform_id', platformId);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      throw error;
-    }
-
-    return data;
-  }
-
-  async getMismatchedReconciliations(
-    platformId?: string,
-    limit: number = 100
-  ): Promise<ReconciliationItem[]> {
-    let query = supabase
-      .from(this.reconciliationsTable)
-      .select('*')
-      .eq('status', 'mismatched')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-
-    if (platformId) {
-      query = query.eq('platform_id', platformId);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      throw error;
-    }
-
-    return data;
-  }
-
-  async generateReconciliationReport(
-    startDate: string,
-    endDate: string,
-    platformId?: string
-  ): Promise<ReconciliationReport> {
-    return this.reconcileTransactions(startDate, endDate, platformId);
-  }
-
-  async cleanupOldReconciliations(days: number = 90): Promise<void> {
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - days);
-
+  private async saveReconciliationResult(platformId: string, result: ReconciliationResult): Promise<void> {
     const { error } = await supabase
-      .from(this.reconciliationsTable)
-      .delete()
-      .lt('created_at', cutoffDate.toISOString());
+      .from(this.table)
+      .insert([{
+        platform_id: platformId,
+        start_date: result.startDate,
+        end_date: result.endDate,
+        total_transactions: result.totalTransactions,
+        matched_transactions: result.matchedTransactions,
+        unmatched_transactions: result.unmatchedTransactions,
+        missing_transactions: result.missingTransactions,
+        total_amount: result.totalAmount,
+        matched_amount: result.matchedAmount,
+        unmatched_amount: result.unmatchedAmount,
+        missing_amount: result.missingAmount,
+        errors: result.errors
+      }]);
 
     if (error) {
-      throw error;
+      throw new Error(`Failed to save reconciliation result: ${error.message}`);
     }
+  }
+
+  private async fetchPlatformTransactions(platform: PlatformConfig, startDate: Date, endDate: Date): Promise<Transaction[]> {
+    // Implementar busca real de transações da plataforma aqui
+    // Por enquanto, retorna um array vazio
+    return [];
   }
 }
 
-export const paymentReconciler = new PaymentReconciliationService(); 
+export const paymentReconciler = new ReconciliationService(); 

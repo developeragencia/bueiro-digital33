@@ -1,149 +1,268 @@
-import { PaymentPlatformService } from '../PaymentPlatformService';
-import { Transaction } from '../../../types/payment';
+import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
+import { BasePlatformService } from './BasePlatformService';
+import axios from 'axios';
 
-export class LogzzService extends PaymentPlatformService {
-  private baseUrl: string;
-  private headers: HeadersInit;
+export class LogzzService extends BasePlatformService {
+  protected readonly SANDBOX_API_URL = 'https://sandbox.logzz.com/api/v1';
+  protected readonly PRODUCTION_API_URL = 'https://api.logzz.com/api/v1';
 
-  constructor(apiKey: string, secretKey: string, sandbox: boolean = true) {
-    super();
-    this.baseUrl = sandbox
-      ? 'https://api.sandbox.logzz.com.br'
-      : 'https://api.logzz.com.br';
-    this.headers = {
+  protected getSandboxApiUrl(): string {
+    return this.SANDBOX_API_URL;
+  }
+
+  protected getProductionApiUrl(): string {
+    return this.PRODUCTION_API_URL;
+  }
+
+  protected getHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      'X-API-Key': this.config.settings.apiKey || ''
     };
+    return headers;
   }
 
-  async fetchOrders(): Promise<Transaction[]> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/v1/orders`, {
-        headers: this.headers,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return data.orders.map(this.mapOrderToTransaction);
-    } catch (error) {
-      console.error('Erro ao buscar pedidos do Logzz:', error);
-      throw error;
-    }
-  }
-
-  private mapOrderToTransaction(order: any): Transaction {
-    return {
-      id: order.id.toString(),
-      platformId: 'logzz',
-      orderId: order.order_number,
-      amount: order.total_amount,
-      currency: 'BRL',
-      status: this.mapStatus(order.status),
-      customer: {
-        name: order.customer.name,
-        email: order.customer.email,
-        phone: order.customer.phone,
-        document: order.customer.document,
-      },
-      product: {
-        id: order.items[0].sku,
-        name: order.items[0].name,
-        price: order.items[0].price,
-        quantity: order.items[0].quantity,
-      },
-      paymentMethod: order.payment_method,
-      createdAt: new Date(order.created_at),
-      updatedAt: new Date(order.updated_at),
-      metadata: {
-        items: order.items,
-        shippingAddress: order.shipping_address,
-        billingAddress: order.billing_address,
-        tracking: {
-          code: order.tracking_code,
-          carrier: order.carrier,
-          status: order.shipping_status,
-        },
-        warehouse: {
-          id: order.warehouse_id,
-          name: order.warehouse_name,
-        },
-        affiliateInfo: {
-          id: order.affiliate_id,
-          name: order.affiliate_name,
-          commission: order.affiliate_commission,
-        },
-      },
-    };
-  }
-
-  private mapStatus(status: string): 'completed' | 'pending' | 'failed' {
+  protected mapStatus(status: string): TransactionStatus {
     switch (status.toLowerCase()) {
       case 'approved':
-      case 'delivered':
-      case 'completed':
-        return 'completed';
+      case 'paid':
+        return 'paid';
       case 'pending':
-      case 'processing':
-      case 'in_transit':
         return 'pending';
-      case 'cancelled':
-      case 'returned':
-      default:
+      case 'failed':
+      case 'declined':
         return 'failed';
+      case 'refunded':
+        return 'refunded';
+      case 'cancelled':
+        return 'cancelled';
+      case 'inactive':
+        return 'inactive';
+      default:
+        return 'error';
     }
   }
 
-  async syncTransactions(): Promise<void> {
+  async processPayment(
+    amount: number,
+    currency: Currency,
+    customer: Customer,
+    metadata?: Record<string, any>
+  ): Promise<Transaction> {
     try {
-      const orders = await this.fetchOrders();
-      for (const order of orders) {
-        await this.saveTransaction(order);
-      }
+      const response = await axios.post(
+        `${this.getApiUrl()}/payments`,
+        {
+          amount,
+          currency,
+          customer,
+          metadata
+        },
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: customer.id || '',
+        platform_id: this.config.platform_id,
+        platform_type: 'logzz' as const,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: 'Logzz'
+        },
+        order_id: response.data.order_id,
+        amount,
+        currency,
+        status: this.mapStatus(response.data.status),
+        customer,
+        payment_method: response.data.payment_method as PaymentMethod,
+        metadata,
+        created_at: new Date(),
+        updated_at: new Date()
+      };
     } catch (error) {
-      console.error('Erro ao sincronizar transações do Logzz:', error);
-      throw error;
+      throw this.createError('Failed to process payment', error);
     }
   }
 
-  async createWebhook(url: string): Promise<void> {
+  async processRefund(
+    transactionId: string,
+    amount?: number,
+    reason?: string
+  ): Promise<Transaction> {
     try {
-      const response = await fetch(`${this.baseUrl}/api/v1/webhooks`, {
-        method: 'POST',
-        headers: this.headers,
-        body: JSON.stringify({
-          url,
-          events: [
-            'order.created',
-            'order.paid',
-            'order.shipped',
-            'order.delivered',
-            'order.cancelled',
-            'order.returned',
-          ],
-        }),
+      const transaction = await this.getTransaction(transactionId);
+      
+      const response = await axios.post(
+        `${this.getApiUrl()}/refunds`,
+        {
+          transaction_id: transactionId,
+          amount: amount || transaction.amount,
+          reason
+        },
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: transaction.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'logzz' as const,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: 'Logzz'
+        },
+        order_id: transaction.order_id,
+        amount: amount || transaction.amount,
+        currency: transaction.currency,
+        status: 'refunded',
+        customer: transaction.customer,
+        payment_method: transaction.payment_method,
+        metadata: {
+          ...transaction.metadata,
+          refund_reason: reason,
+          refund_date: new Date().toISOString()
+        },
+        created_at: new Date(),
+        updated_at: new Date()
+      };
+    } catch (error) {
+      throw this.createError('Failed to process refund', error);
+    }
+  }
+
+  async validateWebhook(payload: Record<string, any>, signature: string): Promise<boolean> {
+    try {
+      const calculatedSignature = this.calculateSignature(payload);
+      return calculatedSignature === signature;
+    } catch (error) {
+      throw this.createError('Failed to validate webhook', error);
+    }
+  }
+
+  async getTransaction(transactionId: string): Promise<Transaction> {
+    try {
+      const response = await axios.get(
+        `${this.getApiUrl()}/transactions/${transactionId}`,
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: response.data.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'logzz' as const,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: 'Logzz'
+        },
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency as Currency,
+        status: this.mapStatus(response.data.status),
+        customer: response.data.customer,
+        payment_method: response.data.payment_method as PaymentMethod,
+        metadata: response.data.metadata,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at)
+      };
+    } catch (error) {
+      throw this.createError('Failed to get transaction', error);
+    }
+  }
+
+  async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
+    try {
+      const params: Record<string, any> = {};
+      if (startDate) params.start_date = startDate.toISOString();
+      if (endDate) params.end_date = endDate.toISOString();
+
+      const response = await axios.get(`${this.getApiUrl()}/transactions`, {
+        headers: this.getHeaders(),
+        params
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+      return response.data.transactions.map((tx: any) => ({
+        id: tx.id,
+        user_id: tx.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'logzz' as const,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: 'Logzz'
+        },
+        order_id: tx.order_id,
+        amount: tx.amount,
+        currency: tx.currency as Currency,
+        status: this.mapStatus(tx.status),
+        customer: tx.customer,
+        payment_method: tx.payment_method as PaymentMethod,
+        metadata: tx.metadata,
+        created_at: new Date(tx.created_at),
+        updated_at: new Date(tx.updated_at)
+      }));
     } catch (error) {
-      console.error('Erro ao criar webhook no Logzz:', error);
-      throw error;
+      throw this.createError('Failed to get transactions', error);
     }
   }
 
-  async handleWebhook(payload: any): Promise<void> {
+  async getStatus(): Promise<PlatformStatusData> {
     try {
-      if (payload.event.startsWith('order.')) {
-        const transaction = this.mapOrderToTransaction(payload.data);
-        await this.saveTransaction(transaction);
-      }
+      const response = await axios.get(`${this.getApiUrl()}/status`, {
+        headers: this.getHeaders()
+      });
+
+      return {
+        platform_id: this.config.platform_id,
+        status: response.data.is_active ? 'active' as TransactionStatus : 'inactive' as TransactionStatus,
+        error_rate: response.data.error_rate,
+        latency: response.data.latency,
+        uptime: response.data.uptime,
+        last_checked: new Date()
+      };
     } catch (error) {
-      console.error('Erro ao processar webhook do Logzz:', error);
-      throw error;
+      throw this.createError('Failed to get platform status', error);
     }
+  }
+
+  async updateConfig(config: Partial<PlatformConfig>): Promise<void> {
+    try {
+      await axios.put(
+        `${this.getApiUrl()}/config`,
+        config,
+        { headers: this.getHeaders() }
+      );
+    } catch (error) {
+      throw this.createError('Failed to update platform configuration', error);
+    }
+  }
+
+  private calculateSignature(payload: Record<string, any>): string {
+    const data = JSON.stringify(payload);
+    const crypto = require('crypto');
+    return crypto
+      .createHmac('sha256', this.config.settings.webhookSecret || '')
+      .update(data)
+      .digest('hex');
   }
 } 

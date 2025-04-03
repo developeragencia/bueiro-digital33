@@ -1,5 +1,6 @@
-import { Transaction } from '../../../types/payment';
+import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
 import { BasePlatformService } from './BasePlatformService';
+import axios from 'axios';
 
 export class TictoService extends BasePlatformService {
   private readonly SANDBOX_API_URL = 'https://sandbox.api.ticto.com.br/v1';
@@ -25,125 +26,224 @@ export class TictoService extends BasePlatformService {
     };
   }
 
-  async processPayment(amount: number, currency: string, customer: Transaction['customer'], metadata?: Record<string, any>): Promise<Transaction> {
-    this.validateApiKey();
-
+  async processPayment(
+    amount: number,
+    currency: Currency,
+    customer: Customer,
+    metadata?: Record<string, any>
+  ): Promise<Transaction> {
     try {
-      const response = await fetch(`${this.getApiUrl()}/transactions`, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify({
+      const response = await axios.post(
+        `${this.getApiUrl()}/payments`,
+        {
           amount,
           currency,
-          customer: {
-            name: customer.name,
-            email: customer.email,
-            phone: customer.phone,
-            document: customer.document,
-            address: metadata?.address
-          },
-          product: {
-            id: metadata?.productId,
-            name: metadata?.productName,
-            price: amount,
-            quantity: metadata?.quantity || 1
-          },
-          payment: {
-            method: metadata?.paymentMethod || 'credit_card',
-            installments: metadata?.installments || 1,
-            card: metadata?.card
-          },
-          notification_url: metadata?.notificationUrl,
-          ...metadata
-        })
-      });
+          customer,
+          metadata
+        },
+        { headers: this.getHeaders() }
+      );
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      const transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'> = {
+      return {
+        id: response.data.id,
+        user_id: customer.id || '',
         platform_id: this.platformId,
-        order_id: data.transaction_id,
+        platform_type: 'ticto',
+        platform_settings: this.config.settings,
+        order_id: response.data.order_id,
         amount,
         currency,
-        status: this.mapStatus(data.status),
+        status: this.mapStatus(response.data.status),
         customer,
-        payment_method: data.payment_method,
-        metadata: {
-          ...metadata,
-          ticto_id: data.id,
-          payment_url: data.payment_url,
-          invoice_url: data.invoice_url,
-          boleto_url: data.boleto_url,
-          pix_qrcode: data.pix_qrcode,
-          pix_code: data.pix_code,
-          installments: data.installments,
-          installment_amount: data.installment_amount,
-          affiliate: data.affiliate,
-          commission: data.commission,
-          producer: data.producer,
-          producer_commission: data.producer_commission,
-          course_id: data.course_id,
-          course_name: data.course_name,
-          membership_id: data.membership_id,
-          membership_name: data.membership_name,
-          subscription_id: data.subscription_id,
-          subscription_status: data.subscription_status,
-          subscription_period: data.subscription_period,
-          subscription_frequency: data.subscription_frequency
-        }
+        payment_method: response.data.payment_method as PaymentMethod,
+        metadata: metadata || {},
+        created_at: new Date(),
+        updated_at: new Date()
       };
-
-      return this.saveTransaction(transaction);
-    } catch (error) {
-      return this.handleApiError(error);
+    } catch (error: any) {
+      throw this.createError(
+        error.message || 'Failed to process payment',
+        'PAYMENT_PROCESSING_ERROR',
+        error.response?.status
+      );
     }
   }
 
-  async processRefund(transactionId: string): Promise<boolean> {
-    this.validateApiKey();
-
+  async processRefund(
+    transactionId: string,
+    amount?: number,
+    reason?: string
+  ): Promise<Transaction> {
     try {
-      const response = await fetch(`${this.getApiUrl()}/transactions/${transactionId}/refund`, {
-        method: 'POST',
+      const transaction = await this.getTransaction(transactionId);
+      
+      const response = await axios.post(
+        `${this.getApiUrl()}/refunds`,
+        {
+          transaction_id: transactionId,
+          amount: amount || transaction.amount,
+          reason
+        },
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        ...transaction,
+        status: amount === transaction.amount ? 'refunded' : 'partially_refunded',
+        refunded_amount: amount || transaction.amount,
+        metadata: {
+          ...transaction.metadata,
+          refund_reason: reason,
+          refund_date: new Date().toISOString()
+        },
+        updated_at: new Date()
+      };
+    } catch (error: any) {
+      throw this.createError(
+        error.message || 'Failed to process refund',
+        'REFUND_PROCESSING_ERROR',
+        error.response?.status
+      );
+    }
+  }
+
+  async validateWebhook(
+    payload: Record<string, any>,
+    signature: string
+  ): Promise<boolean> {
+    try {
+      const response = await axios.post(
+        `${this.getApiUrl()}/webhooks/validate`,
+        { payload, signature },
+        { headers: this.getHeaders() }
+      );
+      return response.data.valid;
+    } catch (error: any) {
+      throw this.createError(
+        error.message || 'Failed to validate webhook',
+        'WEBHOOK_VALIDATION_ERROR',
+        error.response?.status
+      );
+    }
+  }
+
+  async getTransaction(transactionId: string): Promise<Transaction> {
+    try {
+      const response = await axios.get(
+        `${this.getApiUrl()}/transactions/${transactionId}`,
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: response.data.user_id,
+        platform_id: this.platformId,
+        platform_type: 'ticto',
+        platform_settings: this.config.settings,
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency as Currency,
+        status: this.mapStatus(response.data.status),
+        customer: response.data.customer,
+        payment_method: response.data.payment_method as PaymentMethod,
+        metadata: response.data.metadata || {},
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at)
+      };
+    } catch (error: any) {
+      throw this.createError(
+        error.message || 'Failed to get transaction',
+        'TRANSACTION_FETCH_ERROR',
+        error.response?.status
+      );
+    }
+  }
+
+  async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
+    try {
+      const params: Record<string, any> = {};
+      if (startDate) params.start_date = startDate.toISOString();
+      if (endDate) params.end_date = endDate.toISOString();
+
+      const response = await axios.get(`${this.getApiUrl()}/transactions`, {
+        headers: this.getHeaders(),
+        params
+      });
+
+      return response.data.map((item: any) => ({
+        id: item.id,
+        user_id: item.user_id,
+        platform_id: this.platformId,
+        platform_type: 'ticto',
+        platform_settings: this.config.settings,
+        order_id: item.order_id,
+        amount: item.amount,
+        currency: item.currency as Currency,
+        status: this.mapStatus(item.status),
+        customer: item.customer,
+        payment_method: item.payment_method as PaymentMethod,
+        metadata: item.metadata || {},
+        created_at: new Date(item.created_at),
+        updated_at: new Date(item.updated_at)
+      }));
+    } catch (error: any) {
+      throw this.createError(
+        error.message || 'Failed to get transactions',
+        'TRANSACTIONS_FETCH_ERROR',
+        error.response?.status
+      );
+    }
+  }
+
+  async getStatus(): Promise<PlatformStatusData> {
+    try {
+      const response = await axios.get(`${this.getApiUrl()}/status`, {
         headers: this.getHeaders()
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      if (data.success) {
-        await this.updateTransactionStatus(transactionId, 'refunded');
-        return true;
-      }
-
-      return false;
-    } catch (error) {
-      return this.handleApiError(error);
+      return {
+        platform_id: this.platformId,
+        is_active: response.data.is_active,
+        uptime: response.data.uptime,
+        error_rate: response.data.error_rate,
+        last_check: new Date(),
+        status: response.data.is_active ? 'active' : 'inactive',
+        created_at: new Date(),
+        updated_at: new Date()
+      };
+    } catch (error: any) {
+      return {
+        platform_id: this.platformId,
+        is_active: false,
+        uptime: 0,
+        error_rate: 1,
+        last_check: new Date(),
+        status: 'error',
+        message: error.message || 'Failed to get platform status',
+        created_at: new Date(),
+        updated_at: new Date()
+      };
     }
   }
 
-  validateWebhook(payload: any, signature: string): boolean {
-    this.validateSecretKey();
-    const calculatedSignature = this.calculateSignature(payload);
-    return calculatedSignature === signature;
+  async updateConfig(config: Partial<PlatformConfig>): Promise<void> {
+    try {
+      await axios.put(
+        `${this.getApiUrl()}/config`,
+        config,
+        { headers: this.getHeaders() }
+      );
+      Object.assign(this.config, config);
+    } catch (error: any) {
+      throw this.createError(
+        error.message || 'Failed to update config',
+        'CONFIG_UPDATE_ERROR',
+        error.response?.status
+      );
+    }
   }
 
-  private calculateSignature(payload: any): string {
-    const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
-    return require('crypto')
-      .createHmac('sha256', this.secretKey!)
-      .update(data)
-      .digest('hex');
-  }
-
-  private generateSignature(): string {
+  private calculateSignature(): string {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const data = `${this.apiKey}${timestamp}`;
     return require('crypto')

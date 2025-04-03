@@ -1,237 +1,288 @@
-import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus } from '../../../types/payment';
+import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
 import { supabase } from '../../../lib/supabase';
+import axios from 'axios';
+
+interface PlatformError extends Error {
+  code?: string;
+  details?: string;
+  statusCode?: number;
+}
+
+type TransactionFilters = {
+  status?: Transaction['status'];
+  startDate?: Date;
+  endDate?: Date;
+  orderId?: string;
+  platformId?: string;
+};
 
 export abstract class BasePlatformService {
-  protected readonly platformId: string;
-  protected readonly apiKey: string;
-  protected readonly secretKey: string;
-  protected readonly sandbox: boolean;
   protected config: PlatformConfig;
+  protected readonly SANDBOX_API_URL: string;
+  protected readonly PRODUCTION_API_URL: string;
 
   constructor(config: PlatformConfig) {
-    this.platformId = config.platformId;
-    this.apiKey = config.apiKey;
-    this.secretKey = config.secretKey;
-    this.sandbox = config.sandbox || false;
     this.config = config;
+    this.SANDBOX_API_URL = this.getSandboxApiUrl();
+    this.PRODUCTION_API_URL = this.getProductionApiUrl();
   }
 
-  protected abstract getSandboxApiUrl(): string;
-  protected abstract getProductionApiUrl(): string;
+  abstract getSandboxApiUrl(): string;
+  abstract getProductionApiUrl(): string;
 
   protected getApiUrl(): string {
-    return this.sandbox ? this.getSandboxApiUrl() : this.getProductionApiUrl();
+    return this.config.sandbox ? this.SANDBOX_API_URL : this.PRODUCTION_API_URL;
   }
 
-  protected getHeaders(): Record<string, string> {
-    return {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json'
-    };
-  }
+  protected abstract getHeaders(): Record<string, string>;
 
   protected validateApiKey(): void {
-    if (!this.apiKey) {
-      throw new Error('API Key is required');
+    if (!this.config.settings.apiKey) {
+      throw this.createError('API Key is required', 'INVALID_API_KEY');
     }
   }
 
   protected validateSecretKey(): void {
-    if (!this.secretKey) {
-      throw new Error('Secret Key is required');
+    if (!this.config.settings.secretKey) {
+      throw this.createError('Secret Key is required', 'INVALID_SECRET_KEY');
     }
   }
 
   protected async saveTransaction(transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>): Promise<Transaction> {
-    const { data, error } = await supabase
-      .from('transactions')
-      .insert([transaction])
-      .select()
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('transactions')
+        .insert([transaction])
+        .select()
+        .single();
 
-    if (error) {
-      throw new Error(`Failed to save transaction: ${error.message}`);
+      if (error) throw error;
+      if (!data) throw this.createError('Failed to save transaction', 'TRANSACTION_SAVE_ERROR');
+
+      return data;
+    } catch (error) {
+      throw this.handleDatabaseError(error, 'Failed to save transaction');
     }
-
-    return data;
   }
 
   protected async getTransactionById(id: string): Promise<Transaction | null> {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('id', id)
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('id', id)
+        .single();
 
-    if (error) {
-      throw new Error(`Failed to get transaction: ${error.message}`);
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      throw this.handleDatabaseError(error, 'Failed to get transaction');
     }
-
-    return data;
   }
 
   protected async updateTransaction(id: string, updates: Partial<Transaction>): Promise<Transaction> {
-    const { data, error } = await supabase
-      .from('transactions')
-      .update({ ...updates, updated_at: new Date() })
-      .eq('id', id)
-      .select()
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('transactions')
+        .update({ ...updates, updated_at: new Date() })
+        .eq('id', id)
+        .select()
+        .single();
 
-    if (error) {
-      throw new Error(`Failed to update transaction: ${error.message}`);
+      if (error) throw error;
+      if (!data) throw this.createError('Transaction not found', 'TRANSACTION_NOT_FOUND');
+
+      return data;
+    } catch (error) {
+      throw this.handleDatabaseError(error, 'Failed to update transaction');
     }
-
-    return data;
   }
 
   protected async deleteTransaction(id: string): Promise<void> {
-    const { data, error } = await supabase
-      .from('transactions')
-      .delete()
-      .eq('id', id);
+    try {
+      const { error } = await supabase
+        .from('transactions')
+        .delete()
+        .eq('id', id);
 
-    if (error) {
-      throw new Error(`Failed to delete transaction: ${error.message}`);
+      if (error) throw error;
+    } catch (error) {
+      throw this.handleDatabaseError(error, 'Failed to delete transaction');
     }
   }
 
-  protected async listTransactions(filters: Record<string, any> = {}): Promise<Transaction[]> {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .match(filters);
+  protected async listTransactions(filters: TransactionFilters = {}): Promise<Transaction[]> {
+    try {
+      let query = supabase
+        .from('transactions')
+        .select('*')
+        .eq('platform_id', this.config.platform_id);
 
-    if (error) {
-      throw new Error(`Failed to list transactions: ${error.message}`);
+      if (filters.status) {
+        query = query.eq('status', filters.status);
+      }
+      if (filters.startDate) {
+        query = query.gte('created_at', filters.startDate.toISOString());
+      }
+      if (filters.endDate) {
+        query = query.lte('created_at', filters.endDate.toISOString());
+      }
+      if (filters.orderId) {
+        query = query.eq('order_id', filters.orderId);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      throw this.handleDatabaseError(error, 'Failed to list transactions');
     }
-
-    return data || [];
   }
 
   protected async updateTransactionStatus(id: string, status: TransactionStatus): Promise<void> {
-    const { error } = await supabase
-      .from('transactions')
-      .update({ status, updated_at: new Date() })
-      .eq('id', id);
+    try {
+      const { error } = await supabase
+        .from('transactions')
+        .update({ status, updated_at: new Date() })
+        .eq('id', id);
 
-    if (error) {
-      throw new Error(`Failed to update transaction status: ${error.message}`);
+      if (error) throw error;
+    } catch (error) {
+      throw this.handleDatabaseError(error, 'Failed to update transaction status');
     }
   }
 
-  protected handleApiError(error: any): never {
+  protected handleApiError(error: unknown): never {
     console.error('API Error:', error);
     
     if (error instanceof Error) {
-      throw error;
+      const apiError = this.createError(
+        error.message,
+        'API_ERROR',
+        error instanceof Error && 'statusCode' in error ? (error as any).statusCode : undefined
+      );
+      throw apiError;
     }
 
-    throw new Error('An unknown error occurred');
+    throw this.createError('An unknown API error occurred', 'UNKNOWN_API_ERROR');
   }
 
   protected async getTransactionByOrderId(orderId: string): Promise<Transaction | null> {
-    try {
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('order_id', orderId)
-        .single();
-
-      if (error) {
-        throw error;
-      }
-
-      return data;
-    } catch (error) {
-      console.error('Error fetching transaction:', error);
-      throw error;
-    }
+    return this.listTransactions({ orderId }).then(transactions => transactions[0] || null);
   }
 
   protected async getTransactionsByPlatformId(): Promise<Transaction[]> {
-    try {
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('platform_id', this.platformId);
-
-      if (error) {
-        throw error;
-      }
-
-      return data;
-    } catch (error) {
-      console.error('Error fetching transactions:', error);
-      throw error;
-    }
+    return this.listTransactions({ platformId: this.config.platform_id });
   }
 
   protected async getTransactionsByStatus(status: Transaction['status']): Promise<Transaction[]> {
-    try {
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('platform_id', this.platformId)
-        .eq('status', status);
-
-      if (error) {
-        throw error;
-      }
-
-      return data;
-    } catch (error) {
-      console.error('Error fetching transactions by status:', error);
-      throw error;
-    }
+    return this.listTransactions({ status });
   }
 
   protected async getTransactionsByDateRange(startDate: Date, endDate: Date): Promise<Transaction[]> {
-    try {
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('platform_id', this.platformId)
-        .gte('created_at', startDate.toISOString())
-        .lte('created_at', endDate.toISOString());
+    return this.listTransactions({ startDate, endDate });
+  }
 
-      if (error) {
-        throw error;
-      }
+  abstract processPayment(
+    amount: number,
+    currency: Currency,
+    customer: Customer,
+    metadata?: Record<string, any>
+  ): Promise<Transaction>;
 
-      return data;
-    } catch (error) {
-      console.error('Error fetching transactions by date range:', error);
-      throw error;
+  abstract processRefund(
+    transactionId: string,
+    amount: number,
+    metadata?: Record<string, any>
+  ): Promise<Transaction>;
+
+  abstract validateWebhook(
+    payload: Record<string, any>,
+    signature: string
+  ): Promise<boolean>;
+
+  abstract getTransaction(transactionId: string): Promise<Transaction>;
+
+  abstract getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]>;
+
+  abstract getStatus(): Promise<PlatformStatusData>;
+
+  abstract updateConfig(config: Partial<PlatformConfig>): Promise<void>;
+
+  protected mapStatus(status: string): TransactionStatus {
+    switch (status.toLowerCase()) {
+      case 'pending':
+      case 'waiting':
+      case 'created':
+        return 'pending';
+      case 'processing':
+      case 'in_progress':
+        return 'processing';
+      case 'authorized':
+      case 'pre_authorized':
+        return 'authorized';
+      case 'paid':
+      case 'completed':
+      case 'approved':
+      case 'success':
+        return 'paid';
+      case 'failed':
+      case 'declined':
+      case 'error':
+        return 'failed';
+      case 'cancelled':
+      case 'canceled':
+      case 'voided':
+        return 'cancelled';
+      case 'refunded':
+        return 'refunded';
+      case 'partially_refunded':
+        return 'partially_refunded';
+      case 'chargeback':
+      case 'charged_back':
+        return 'chargeback';
+      case 'disputed':
+      case 'dispute':
+        return 'dispute';
+      case 'inactive':
+      case 'disabled':
+        return 'inactive';
+      default:
+        return 'error';
     }
   }
 
-  abstract processPayment(data: Record<string, any>): Promise<Transaction>;
-  
-  abstract processRefund(transactionId: string, amount?: number, reason?: string): Promise<Transaction>;
-  
-  abstract validateWebhook(payload: Record<string, any>, signature: string): Promise<boolean>;
-  
-  abstract getTransaction(transactionId: string): Promise<Transaction>;
-  
-  abstract getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]>;
-  
-  abstract getStatus(): Promise<PlatformStatusData>;
-  
-  abstract updateConfig(config: Partial<PlatformConfig>): Promise<void>;
+  protected createError(message: string, originalError?: unknown): Error {
+    if (originalError instanceof Error) {
+      return new Error(`${message}: ${originalError.message}`);
+    }
+    return new Error(message);
+  }
 
-  protected mapStatus(status: string): Transaction['status'] {
-    const statusMap: Record<string, Transaction['status']> = {
-      'completed': 'completed',
-      'pending': 'pending',
-      'processing': 'processing',
-      'failed': 'failed',
-      'refunded': 'refunded',
-      'partially_refunded': 'partially_refunded',
-      'cancelled': 'cancelled',
-      'expired': 'expired'
-    };
+  protected handleDatabaseError(error: unknown, context: string): PlatformError {
+    console.error(`Database Error (${context}):`, error);
+    
+    if (error instanceof Error) {
+      return this.createError(
+        `${context}: ${error.message}`,
+        'DATABASE_ERROR',
+        error instanceof Error && 'statusCode' in error ? (error as any).statusCode : undefined
+      );
+    }
 
-    return statusMap[status.toLowerCase()] || 'pending';
+    return this.createError(`${context}: Unknown error`, 'DATABASE_ERROR');
+  }
+
+  protected handleError(error: any): never {
+    if (axios.isAxiosError(error)) {
+      throw new Error(
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.message ||
+        'An error occurred while processing the request'
+      );
+    }
+    throw error;
   }
 } 

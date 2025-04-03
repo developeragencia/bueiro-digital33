@@ -1,18 +1,21 @@
-import { PaymentPlatform, PaymentPlatformType, PlatformConfig, Transaction } from '../../types/payment';
+import { PaymentPlatform, PaymentPlatformType, PlatformConfig, Transaction, TransactionStatus, PlatformStatusData } from '../../types/payment';
 import { getPlatformService } from './platforms';
-import { PaymentPlatformService } from './PaymentPlatformService';
 import { TransactionService } from './TransactionService';
+import { WebhookService } from './WebhookService';
 import { StatusService } from './StatusService';
+import { PaymentPlatformService } from './PaymentPlatformService';
 
 export class PaymentService {
   private platformService: PaymentPlatformService;
-  private transactionService: typeof TransactionService;
-  private statusService: typeof StatusService;
+  private statusService: StatusService;
+  private transactionService: TransactionService;
+  private webhookService: WebhookService;
 
   constructor() {
     this.platformService = new PaymentPlatformService();
-    this.transactionService = TransactionService;
-    this.statusService = StatusService;
+    this.statusService = new StatusService();
+    this.transactionService = new TransactionService();
+    this.webhookService = new WebhookService(this.platformService, this.transactionService);
   }
 
   async getAvailablePlatforms(): Promise<PaymentPlatform[]> {
@@ -31,63 +34,45 @@ export class PaymentService {
     return this.platformService.integrate(platform, config, userId);
   }
 
-  async updatePlatformConfig(platformId: string, config: Partial<PlatformConfig>): Promise<PaymentPlatform> {
-    return this.platformService.updateConfig(platformId, config);
+  async updatePlatformConfig(platform: PaymentPlatform, config: PlatformConfig): Promise<PaymentPlatform> {
+    return this.platformService.updateConfig(platform, config);
   }
 
   async deletePlatform(platformId: string): Promise<void> {
     return this.platformService.delete(platformId);
   }
 
-  async processPayment(
-    platformId: string,
-    amount: number,
-    currency: string,
-    customer: Transaction['customer'],
-    metadata?: Record<string, any>
-  ): Promise<Transaction> {
-    const platform = await this.getPlatformById(platformId);
-    if (!platform) {
-      throw new Error('Platform not found');
-    }
-
-    const service = getPlatformService(platform.type, {
-      apiKey: platform.settings.apiKey,
-      secretKey: platform.settings.secretKey,
-      sandbox: platform.settings.sandbox || false
+  async processPayment(platform: PaymentPlatform, data: Record<string, any>): Promise<Transaction> {
+    const transaction = await this.platformService.processPayment(platform, data);
+    await this.transactionService.create(transaction);
+    await this.statusService.updateMetrics(platform.id, { 
+      success_rate: 1,
+      created_at: new Date(),
+      updated_at: new Date()
     });
-
-    return service.processPayment(amount, currency, customer, metadata);
+    return transaction;
   }
 
-  async processRefund(platformId: string, transactionId: string): Promise<boolean> {
-    const platform = await this.getPlatformById(platformId);
-    if (!platform) {
-      throw new Error('Platform not found');
-    }
-
-    const service = getPlatformService(platform.type, {
-      apiKey: platform.settings.apiKey,
-      secretKey: platform.settings.secretKey,
-      sandbox: platform.settings.sandbox || false
-    });
-
-    return service.processRefund(transactionId);
+  async processRefund(platform: PaymentPlatform, transactionId: string, amount?: number, reason?: string): Promise<Transaction> {
+    const transaction = await this.platformService.processRefund(platform, transactionId, amount, reason);
+    await this.transactionService.update(transaction.id, { status: transaction.status });
+    return transaction;
   }
 
-  async validateWebhook(platformId: string, payload: any, signature: string): Promise<boolean> {
-    const platform = await this.getPlatformById(platformId);
-    if (!platform) {
-      throw new Error('Platform not found');
-    }
+  async validateWebhook(platform: PaymentPlatform, payload: Record<string, any>, signature: string): Promise<boolean> {
+    return this.platformService.validateWebhook(platform, payload, signature);
+  }
 
-    const service = getPlatformService(platform.type, {
-      apiKey: platform.settings.apiKey,
-      secretKey: platform.settings.secretKey,
-      sandbox: platform.settings.sandbox || false
-    });
+  async getTransaction(platform: PaymentPlatform, transactionId: string): Promise<Transaction> {
+    return this.platformService.getTransaction(platform, transactionId);
+  }
 
-    return service.validateWebhook(payload, signature);
+  async getTransactions(platform: PaymentPlatform, startDate?: Date, endDate?: Date): Promise<Transaction[]> {
+    return this.platformService.getTransactions(platform, startDate, endDate);
+  }
+
+  async getPlatformStatus(platform: PaymentPlatform): Promise<PlatformStatusData> {
+    return this.platformService.getStatus(platform);
   }
 
   async getTransactionById(transactionId: string): Promise<Transaction | null> {
@@ -106,15 +91,15 @@ export class PaymentService {
     return this.transactionService.getByUserId(userId);
   }
 
-  async getTransactionsByStatus(status: Transaction['status']): Promise<Transaction[]> {
+  async getTransactionsByStatus(status: TransactionStatus): Promise<Transaction[]> {
     return this.transactionService.getByStatus(status);
   }
 
   async getTransactionsByDateRange(startDate: Date, endDate: Date): Promise<Transaction[]> {
-    return this.transactionService.getByDateRange(startDate, endDate);
+    return this.transactionService.getByDateRange(startDate.toISOString(), endDate.toISOString());
   }
 
-  async updateTransactionStatus(transactionId: string, status: Transaction['status']): Promise<void> {
+  async updateTransactionStatus(transactionId: string, status: TransactionStatus): Promise<Transaction> {
     return this.transactionService.updateStatus(transactionId, status);
   }
 
@@ -122,15 +107,17 @@ export class PaymentService {
     return this.transactionService.delete(transactionId);
   }
 
-  async getPlatformStatus(platformId: string): Promise<boolean> {
-    return this.statusService.getStatus(platformId);
-  }
-
   async monitorPlatform(platformId: string): Promise<void> {
     return this.statusService.monitorPlatform(platformId);
   }
 
-  async checkPlatformHealth(platformId: string): Promise<void> {
+  async checkPlatformHealth(platformId: string): Promise<boolean> {
     return this.statusService.checkHealth(platformId);
   }
-} 
+
+  async listTransactions(filters?: Partial<Transaction>): Promise<Transaction[]> {
+    return this.transactionService.list(filters);
+  }
+}
+
+export const paymentService = new PaymentService(); 

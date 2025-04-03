@@ -361,4 +361,4 @@ export class PaymentMetricsService {
   }
 }
 
-export const paymentMetrics = new PaymentMetricsService();
+export const MetricsService = new PaymentMetricsService();

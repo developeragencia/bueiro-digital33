@@ -26,7 +26,6 @@ export class ClickBankService extends BasePlatformService {
 
   async processPayment(data: Record<string, any>): Promise<Transaction> {
     try {
-      // Simular chamada à API do ClickBank
       const mockApiResponse = {
         id: 'cb_' + Math.random().toString(36).substr(2, 9),
         status: 'pending',
@@ -110,7 +109,6 @@ export class ClickBankService extends BasePlatformService {
 
   async getTransaction(transactionId: string): Promise<Transaction> {
     try {
-      // Simula a busca de uma transação
       const mockTransaction: Transaction = {
         id: transactionId,
         user_id: 'user123',
@@ -150,7 +148,6 @@ export class ClickBankService extends BasePlatformService {
 
   async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
     try {
-      // Implementar busca real de transações aqui
       return [];
     } catch (error) {
       throw new Error(`Failed to get transactions: ${(error as Error).message}`);

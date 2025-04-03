@@ -6,195 +6,126 @@ import {
   PlatformStatusData,
   Transaction,
   PlatformConfig,
-  PlatformIntegration
+  PlatformIntegration,
+  Currency
 } from '../../types/payment';
 import { Database } from '../../types/supabase';
-import { KiwifyService } from './platforms/KiwifyService';
-import { ClickBankService } from './platforms/ClickBankService';
-import { AppmaxService } from './platforms/AppmaxService';
-import { CartPandaService } from './platforms/CartPandaService';
-import { Digistore24Service } from './platforms/Digistore24Service';
-import { DoppusService } from './platforms/DoppusService';
-import { FortPayService } from './platforms/FortPayService';
-import { FRCService } from './platforms/FRCService';
+import { getPlatformService } from './platforms';
 import { BasePlatformService } from './platforms/BasePlatformService';
 
-type PaymentPlatformRow = Database['public']['Tables']['payment_platforms']['Row'];
+interface PlatformServiceError extends Error {
+  code?: string;
+  details?: string;
+  statusCode?: number;
+}
+
+type PlatformServiceMap = Map<string, BasePlatformService>;
 
 export class PaymentPlatformService {
-  private platforms: Map<string, BasePlatformService>;
+  private platforms: PlatformServiceMap;
 
   constructor() {
     this.platforms = new Map();
   }
 
-  private initializePlatform(platform: PaymentPlatform) {
-    if (!this.platforms.has(platform.id)) {
-      const config: PlatformConfig = {
-        platformId: platform.id,
-        name: platform.name,
-        apiKey: platform.settings.apiKey,
-        secretKey: platform.settings.secretKey,
-        sandbox: platform.settings.sandbox,
-        settings: platform.settings
-      };
-
-      switch (platform.type) {
-        case 'kiwify':
-          this.platforms.set(platform.id, new KiwifyService(config));
-          break;
-        case 'clickbank':
-          this.platforms.set(platform.id, new ClickBankService(config));
-          break;
-        case 'appmax':
-          this.platforms.set(platform.id, new AppmaxService(config));
-          break;
-        case 'cartpanda':
-          this.platforms.set(platform.id, new CartPandaService(config));
-          break;
-        case 'digistore24':
-          this.platforms.set(platform.id, new Digistore24Service(config));
-          break;
-        case 'doppus':
-          this.platforms.set(platform.id, new DoppusService(config));
-          break;
-        case 'fortpay':
-          this.platforms.set(platform.id, new FortPayService(config));
-          break;
-        case 'frc':
-          this.platforms.set(platform.id, new FRCService(config));
-          break;
-        default:
-          throw new Error(`Platform type ${platform.type} not supported`);
-      }
+  private initializePlatform(platform: PaymentPlatform): void {
+    if (this.platforms.has(platform.id)) {
+      return;
     }
+
+    const config: PlatformConfig = {
+      platformId: platform.id,
+      name: platform.name,
+      type: platform.type,
+      settings: platform.settings,
+      apiKey: platform.settings.apiKey,
+      secretKey: platform.settings.secretKey,
+      sandbox: platform.settings.sandbox,
+      metadata: platform.metadata,
+      currency: platform.settings.currency,
+      active: platform.active
+    };
+
+    const service = getPlatformService(platform.type, config);
+    this.platforms.set(platform.id, service);
   }
 
-  async processPayment(platform: PaymentPlatform, data: Record<string, any>): Promise<Transaction> {
+  private getPlatformService(platform: PaymentPlatform): BasePlatformService {
     this.initializePlatform(platform);
     const service = this.platforms.get(platform.id);
-    if (!service) throw new Error(`Platform ${platform.id} not initialized`);
-    return service.processPayment(data);
+    if (!service) {
+      const error = new Error(`Platform ${platform.id} not initialized`) as PlatformServiceError;
+      error.code = 'PLATFORM_NOT_INITIALIZED';
+      throw error;
+    }
+    return service;
   }
 
-  async processRefund(platform: PaymentPlatform, transactionId: string, amount?: number, reason?: string): Promise<Transaction> {
-    this.initializePlatform(platform);
-    const service = this.platforms.get(platform.id);
-    if (!service) throw new Error(`Platform ${platform.id} not initialized`);
+  async processPayment(
+    platform: PaymentPlatform,
+    amount: number,
+    currency: Currency,
+    customer: Transaction['customer'],
+    metadata?: Record<string, any>
+  ): Promise<Transaction> {
+    const service = this.getPlatformService(platform);
+    return service.processPayment(amount, currency, customer, metadata);
+  }
+
+  async processRefund(
+    platform: PaymentPlatform,
+    transactionId: string,
+    amount?: number,
+    reason?: string
+  ): Promise<Transaction> {
+    const service = this.getPlatformService(platform);
     return service.processRefund(transactionId, amount, reason);
   }
 
-  async validateWebhook(platform: PaymentPlatform, payload: Record<string, any>, signature: string): Promise<boolean> {
-    this.initializePlatform(platform);
-    const service = this.platforms.get(platform.id);
-    if (!service) throw new Error(`Platform ${platform.id} not initialized`);
+  async validateWebhook(
+    platform: PaymentPlatform,
+    payload: Record<string, any>,
+    signature: string
+  ): Promise<boolean> {
+    const service = this.getPlatformService(platform);
     return service.validateWebhook(payload, signature);
   }
 
-  async getTransaction(platform: PaymentPlatform, transactionId: string): Promise<Transaction> {
-    this.initializePlatform(platform);
-    const service = this.platforms.get(platform.id);
-    if (!service) throw new Error(`Platform ${platform.id} not initialized`);
+  async getTransaction(
+    platform: PaymentPlatform,
+    transactionId: string
+  ): Promise<Transaction> {
+    const service = this.getPlatformService(platform);
     return service.getTransaction(transactionId);
   }
 
-  async getTransactions(platform: PaymentPlatform, startDate?: Date, endDate?: Date): Promise<Transaction[]> {
-    this.initializePlatform(platform);
-    const service = this.platforms.get(platform.id);
-    if (!service) throw new Error(`Platform ${platform.id} not initialized`);
+  async getTransactions(
+    platform: PaymentPlatform,
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<Transaction[]> {
+    const service = this.getPlatformService(platform);
     return service.getTransactions(startDate, endDate);
   }
 
   async getStatus(platform: PaymentPlatform): Promise<PlatformStatusData> {
-    this.initializePlatform(platform);
-    const service = this.platforms.get(platform.id);
-    if (!service) throw new Error(`Platform ${platform.id} not initialized`);
+    const service = this.getPlatformService(platform);
     return service.getStatus();
   }
 
-  getAvailablePlatforms(): PaymentPlatformType[] {
-    return [
-      'kiwify',
-      'clickbank',
-      'appmax',
-      'cartpanda',
-      'digistore24',
-      'doppus',
-      'fortpay',
-      'frc'
-    ];
-  }
-
-  async integrate(platform: PaymentPlatformType, config: PlatformConfig, userId: string): Promise<PlatformIntegration> {
-    const { data, error } = await supabase
-      .from('payment_platforms')
-      .insert({
-        name: config.name,
-        type: platform,
-        settings: config.settings,
-        user_id: userId,
-        active: true
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data;
-  }
-
-  async update(id: string, updates: Partial<PaymentPlatform>): Promise<PaymentPlatform> {
-    const { data, error } = await supabase
-      .from('payment_platforms')
-      .update(updates)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data;
-  }
-
-  async updateConfig(platform: PaymentPlatform, config: PlatformConfig): Promise<void> {
-    this.initializePlatform(platform);
-    const service = this.platforms.get(platform.id);
-    if (!service) throw new Error(`Platform ${platform.id} not initialized`);
+  async updateConfig(
+    platform: PaymentPlatform,
+    config: Partial<PlatformConfig>
+  ): Promise<void> {
+    const service = this.getPlatformService(platform);
     await service.updateConfig(config);
   }
 
-  async toggleActive(id: string): Promise<PaymentPlatform> {
-    const platform = await this.getById(id);
-    if (!platform) throw new Error(`Platform ${id} not found`);
-    return this.update(id, { active: !platform.active });
-  }
-
-  async getById(id: string): Promise<PaymentPlatform | null> {
-    const { data, error } = await supabase
-      .from('payment_platforms')
-      .select()
-      .eq('id', id)
-      .single();
-
-    if (error) throw error;
-    return data;
-  }
-
-  async getByUserId(userId: string): Promise<PaymentPlatform[]> {
-    const { data, error } = await supabase
-      .from('payment_platforms')
-      .select()
-      .eq('user_id', userId);
-
-    if (error) throw error;
-    return data;
-  }
-
-  async delete(id: string): Promise<void> {
-    const { error } = await supabase
-      .from('payment_platforms')
-      .delete()
-      .eq('id', id);
-
-    if (error) throw error;
+  private createError(message: string, code: string, statusCode?: number): PlatformServiceError {
+    const error = new Error(message) as PlatformServiceError;
+    error.code = code;
+    if (statusCode) error.statusCode = statusCode;
+    return error;
   }
 }
 

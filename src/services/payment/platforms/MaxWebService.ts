@@ -1,160 +1,250 @@
-import { PaymentPlatformService } from '../PaymentPlatformService';
-import { Transaction } from '../../../types/payment';
+import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
+import { BasePlatformService } from './BasePlatformService';
+import axios from 'axios';
 
-export class MaxWebService extends PaymentPlatformService {
-  private baseUrl: string;
-  private headers: HeadersInit;
-
-  constructor(apiKey: string, secretKey: string, sandbox: boolean = true) {
-    super();
-    this.baseUrl = sandbox
-      ? 'https://api.sandbox.maxweb.com.br'
-      : 'https://api.maxweb.com.br';
-    this.headers = {
-      'Content-Type': 'application/json',
-      'X-Api-Key': apiKey,
-      'X-Secret-Key': secretKey,
-    };
+export class MaxWebService extends BasePlatformService {
+  getSandboxApiUrl(): string {
+    return 'https://sandbox.maxweb.com/api/v1';
   }
 
-  async fetchOrders(): Promise<Transaction[]> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/v2/orders`, {
-        headers: this.headers,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return data.orders.map(this.mapOrderToTransaction);
-    } catch (error) {
-      console.error('Erro ao buscar pedidos do MaxWeb:', error);
-      throw error;
-    }
+  getProductionApiUrl(): string {
+    return 'https://api.maxweb.com/api/v1';
   }
 
-  private mapOrderToTransaction(order: any): Transaction {
+  protected getHeaders(): Record<string, string> {
     return {
-      id: order.id.toString(),
-      platformId: 'maxweb',
-      orderId: order.order_number,
-      amount: order.total_amount,
-      currency: 'BRL',
-      status: this.mapStatus(order.status),
-      customer: {
-        name: order.customer.name,
-        email: order.customer.email,
-        phone: order.customer.phone,
-        document: order.customer.document,
-      },
-      product: {
-        id: order.items[0].product_id,
-        name: order.items[0].name,
-        price: order.items[0].price,
-        quantity: order.items[0].quantity,
-      },
-      paymentMethod: order.payment_method,
-      createdAt: new Date(order.created_at),
-      updatedAt: new Date(order.updated_at),
-      metadata: {
-        items: order.items,
-        shippingAddress: order.shipping_address,
-        billingAddress: order.billing_address,
-        tracking: {
-          code: order.tracking_code,
-          url: order.tracking_url,
-          carrier: order.shipping_carrier,
-        },
-        affiliate: {
-          id: order.affiliate_id,
-          name: order.affiliate_name,
-          commission: order.affiliate_commission,
-        },
-        campaign: {
-          id: order.campaign_id,
-          name: order.campaign_name,
-          source: order.traffic_source,
-        },
-        utm: {
-          source: order.utm_source,
-          medium: order.utm_medium,
-          campaign: order.utm_campaign,
-          content: order.utm_content,
-          term: order.utm_term,
-        },
-      },
+      'Content-Type': 'application/json',
+      'X-API-Key': this.config.settings.apiKey,
+      'X-Secret-Key': this.config.settings.secretKey || ''
     };
   }
 
-  private mapStatus(status: string): 'completed' | 'pending' | 'failed' {
+  protected mapStatus(status: string): TransactionStatus {
     switch (status.toLowerCase()) {
       case 'approved':
       case 'paid':
-      case 'delivered':
-        return 'completed';
+        return 'paid';
       case 'pending':
-      case 'waiting_payment':
-      case 'in_transit':
         return 'pending';
-      case 'cancelled':
-      case 'refunded':
-      default:
+      case 'failed':
+      case 'declined':
         return 'failed';
+      case 'refunded':
+        return 'refunded';
+      case 'cancelled':
+        return 'cancelled';
+      case 'inactive':
+        return 'inactive';
+      default:
+        return 'error';
     }
   }
 
-  async syncTransactions(): Promise<void> {
+  async processPayment(
+    amount: number,
+    currency: Currency,
+    customer: Customer,
+    metadata?: Record<string, any>
+  ): Promise<Transaction> {
     try {
-      const orders = await this.fetchOrders();
-      for (const order of orders) {
-        await this.saveTransaction(order);
-      }
+      const response = await axios.post(
+        `${this.getApiUrl()}/payments`,
+        {
+          amount,
+          currency,
+          customer,
+          metadata
+        },
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'maxweb',
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        customer: response.data.customer,
+        payment_method: response.data.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: response.data.status as TransactionStatus,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
+      };
     } catch (error) {
-      console.error('Erro ao sincronizar transações do MaxWeb:', error);
-      throw error;
+      throw this.handleError(error);
     }
   }
 
-  async createWebhook(url: string): Promise<void> {
+  async processRefund(
+    transactionId: string,
+    amount: number,
+    metadata?: Record<string, any>
+  ): Promise<Transaction> {
     try {
-      const response = await fetch(`${this.baseUrl}/api/v2/webhooks`, {
-        method: 'POST',
-        headers: this.headers,
-        body: JSON.stringify({
-          url,
-          events: [
-            'order.created',
-            'order.approved',
-            'order.paid',
-            'order.shipped',
-            'order.delivered',
-            'order.cancelled',
-            'order.refunded',
-          ],
-          active: true,
-        }),
+      const response = await axios.post(
+        `${this.getApiUrl()}/refunds`,
+        {
+          transaction_id: transactionId,
+          amount,
+          metadata
+        },
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'maxweb',
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        customer: response.data.customer,
+        payment_method: response.data.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: response.data.status as TransactionStatus,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async validateWebhook(payload: Record<string, any>, signature: string): Promise<boolean> {
+    const calculatedSignature = this.calculateSignature(payload);
+    return calculatedSignature === signature;
+  }
+
+  async getTransaction(transactionId: string): Promise<Transaction> {
+    try {
+      const response = await axios.get(
+        `${this.getApiUrl()}/transactions/${transactionId}`,
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'maxweb',
+        order_id: response.data.order_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        customer: response.data.customer,
+        payment_method: response.data.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: response.data.status as TransactionStatus,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        metadata: response.data.metadata
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
+    try {
+      const params: Record<string, any> = {};
+      if (startDate) params.start_date = startDate.toISOString();
+      if (endDate) params.end_date = endDate.toISOString();
+
+      const response = await axios.get(`${this.getApiUrl()}/transactions`, {
+        headers: this.getHeaders(),
+        params
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+      return response.data.map((tx: any) => ({
+        id: tx.id,
+        user_id: this.config.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'maxweb',
+        order_id: tx.order_id,
+        amount: tx.amount,
+        currency: tx.currency,
+        customer: tx.customer,
+        payment_method: tx.payment_method,
+        platform_settings: {
+          webhookUrl: this.config.settings.webhookUrl,
+          webhookSecret: this.config.settings.webhookSecret,
+          currency: this.config.settings.currency,
+          apiKey: this.config.settings.apiKey,
+          secretKey: this.config.settings.secretKey,
+          sandbox: this.config.settings.sandbox,
+          name: this.config.settings.name
+        },
+        status: tx.status as TransactionStatus,
+        created_at: new Date(tx.created_at),
+        updated_at: new Date(tx.updated_at),
+        metadata: tx.metadata
+      }));
     } catch (error) {
-      console.error('Erro ao criar webhook no MaxWeb:', error);
-      throw error;
+      throw this.handleError(error);
     }
   }
 
-  async handleWebhook(payload: any): Promise<void> {
+  async getStatus(): Promise<PlatformStatusData> {
     try {
-      if (payload.event.startsWith('order.')) {
-        const transaction = this.mapOrderToTransaction(payload.data);
-        await this.saveTransaction(transaction);
-      }
+      const response = await axios.get(`${this.getApiUrl()}/status`, {
+        headers: this.getHeaders()
+      });
+
+      return {
+        platform_id: this.config.platform_id,
+        status: response.data.status as TransactionStatus,
+        error_rate: response.data.error_rate,
+        success_rate: response.data.success_rate,
+        is_active: response.data.is_active,
+        last_checked: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: response.data.metadata
+      };
     } catch (error) {
-      console.error('Erro ao processar webhook do MaxWeb:', error);
-      throw error;
+      throw this.handleError(error);
     }
+  }
+
+  async updateConfig(config: Partial<PlatformConfig>): Promise<void> {
+    Object.assign(this.config, config);
+  }
+
+  private calculateSignature(payload: Record<string, any>): string {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const data = `${this.config.settings.secretKey}${timestamp}`;
+    return require('crypto')
+      .createHmac('sha256', this.config.settings.secretKey || '')
+      .update(data)
+      .digest('hex');
   }
 } 
