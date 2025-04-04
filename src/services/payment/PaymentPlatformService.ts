@@ -1,133 +1,119 @@
+import { PlatformConfig, Transaction, PlatformStatusData, Currency, PaymentMethod } from '../../types/payment';
 import { supabase } from '../../lib/supabase';
-import {
-  PaymentPlatform,
-  PaymentPlatformType,
-  PlatformSettings,
-  PlatformStatusData,
-  Transaction,
-  PlatformConfig,
-  PlatformIntegration,
-  Currency
-} from '../../types/payment';
-import { Database } from '../../types/supabase';
 import { getPlatformService } from './platforms';
-import { BasePlatformService } from './platforms/BasePlatformService';
-
-interface PlatformServiceError extends Error {
-  code?: string;
-  details?: string;
-  statusCode?: number;
-}
-
-type PlatformServiceMap = Map<string, BasePlatformService>;
 
 export class PaymentPlatformService {
-  private platforms: PlatformServiceMap;
+  private table = 'payment_platforms';
 
-  constructor() {
-    this.platforms = new Map();
+  async listPlatforms(): Promise<PlatformConfig[]> {
+    const { data, error } = await supabase
+      .from(this.table)
+      .select('*');
+
+    if (error) throw new Error(`Failed to list platforms: ${error.message}`);
+    return data || [];
   }
 
-  private initializePlatform(platform: PaymentPlatform): void {
-    if (this.platforms.has(platform.id)) {
-      return;
-    }
+  async getPlatform(platformId: string): Promise<PlatformConfig | null> {
+    const { data, error } = await supabase
+      .from(this.table)
+      .select('*')
+      .eq('platform_id', platformId)
+      .single();
 
-    const config: PlatformConfig = {
-      platformId: platform.id,
-      name: platform.name,
-      type: platform.type,
-      settings: platform.settings,
-      apiKey: platform.settings.apiKey,
-      secretKey: platform.settings.secretKey,
-      sandbox: platform.settings.sandbox,
-      metadata: platform.metadata,
-      currency: platform.settings.currency,
-      active: platform.active
-    };
-
-    const service = getPlatformService(platform.type, config);
-    this.platforms.set(platform.id, service);
+    if (error) throw new Error(`Failed to get platform: ${error.message}`);
+    return data;
   }
 
-  private getPlatformService(platform: PaymentPlatform): BasePlatformService {
-    this.initializePlatform(platform);
-    const service = this.platforms.get(platform.id);
-    if (!service) {
-      const error = new Error(`Platform ${platform.id} not initialized`) as PlatformServiceError;
-      error.code = 'PLATFORM_NOT_INITIALIZED';
-      throw error;
-    }
-    return service;
+  async createPlatform(platform: PlatformConfig): Promise<PlatformConfig> {
+    const { data, error } = await supabase
+      .from(this.table)
+      .insert([platform])
+      .select()
+      .single();
+
+    if (error) throw new Error(`Failed to create platform: ${error.message}`);
+    return data;
+  }
+
+  async updatePlatform(platformId: string, platform: Partial<PlatformConfig>): Promise<PlatformConfig> {
+    const { data, error } = await supabase
+      .from(this.table)
+      .update(platform)
+      .eq('platform_id', platformId)
+      .select()
+      .single();
+
+    if (error) throw new Error(`Failed to update platform: ${error.message}`);
+    return data;
+  }
+
+  async deletePlatform(platformId: string): Promise<void> {
+    const { error } = await supabase
+      .from(this.table)
+      .delete()
+      .eq('platform_id', platformId);
+
+    if (error) throw new Error(`Failed to delete platform: ${error.message}`);
   }
 
   async processPayment(
-    platform: PaymentPlatform,
-    amount: number,
+    platform: PlatformConfig,
+    paymentData: Record<string, any>,
     currency: Currency,
-    customer: Transaction['customer'],
-    metadata?: Record<string, any>
+    paymentMethod: PaymentMethod,
+    amount: number
   ): Promise<Transaction> {
-    const service = this.getPlatformService(platform);
-    return service.processPayment(amount, currency, customer, metadata);
+    const service = getPlatformService(platform.type, platform);
+    return service.processPayment(amount, currency, paymentMethod, paymentData);
   }
 
-  async processRefund(
-    platform: PaymentPlatform,
+  async refundTransaction(
+    platform: PlatformConfig,
     transactionId: string,
-    amount?: number,
-    reason?: string
+    amount?: number
   ): Promise<Transaction> {
-    const service = this.getPlatformService(platform);
-    return service.processRefund(transactionId, amount, reason);
-  }
-
-  async validateWebhook(
-    platform: PaymentPlatform,
-    payload: Record<string, any>,
-    signature: string
-  ): Promise<boolean> {
-    const service = this.getPlatformService(platform);
-    return service.validateWebhook(payload, signature);
+    const service = getPlatformService(platform.type, platform);
+    return service.refundTransaction(transactionId, amount);
   }
 
   async getTransaction(
-    platform: PaymentPlatform,
+    platform: PlatformConfig,
     transactionId: string
   ): Promise<Transaction> {
-    const service = this.getPlatformService(platform);
+    const service = getPlatformService(platform.type, platform);
     return service.getTransaction(transactionId);
   }
 
   async getTransactions(
-    platform: PaymentPlatform,
+    platform: PlatformConfig,
     startDate?: Date,
     endDate?: Date
   ): Promise<Transaction[]> {
-    const service = this.getPlatformService(platform);
+    const service = getPlatformService(platform.type, platform);
     return service.getTransactions(startDate, endDate);
   }
 
-  async getStatus(platform: PaymentPlatform): Promise<PlatformStatusData> {
-    const service = this.getPlatformService(platform);
+  async getStatus(platform: PlatformConfig): Promise<PlatformStatusData> {
+    const service = getPlatformService(platform.type, platform);
     return service.getStatus();
   }
 
-  async updateConfig(
-    platform: PaymentPlatform,
-    config: Partial<PlatformConfig>
-  ): Promise<void> {
-    const service = this.getPlatformService(platform);
-    await service.updateConfig(config);
+  async cancelTransaction(
+    platform: PlatformConfig,
+    transactionId: string
+  ): Promise<Transaction> {
+    const service = getPlatformService(platform.type, platform);
+    return service.cancelTransaction(transactionId);
   }
 
-  private createError(message: string, code: string, statusCode?: number): PlatformServiceError {
-    const error = new Error(message) as PlatformServiceError;
-    error.code = code;
-    if (statusCode) error.statusCode = statusCode;
-    return error;
+  async validateWebhookSignature(
+    platform: PlatformConfig,
+    signature: string,
+    payload: Record<string, any>
+  ): Promise<boolean> {
+    const service = getPlatformService(platform.type, platform);
+    return service.validateWebhookSignature(signature, payload);
   }
 }
-
-export const paymentPlatformService = new PaymentPlatformService();
  

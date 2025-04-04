@@ -1,4 +1,4 @@
-import { PlatformSettings, PlatformStatus } from './payment';
+import { PlatformSettings, PlatformStatusData } from './payment';
 
 export type Json =
   | string
@@ -65,48 +65,87 @@ export interface Database {
       }
       campaigns: {
         Row: {
-          id: string
-          created_at: string
-          updated_at: string
-          name: string
-          description: string | null
-          status: 'active' | 'inactive' | 'archived'
-          start_date: string | null
-          end_date: string | null
-          budget: number | null
-          target_audience: string | null
-          objectives: string | null
-          user_id: string
-        }
+          id: string;
+          name: string;
+          description: string;
+          status: string;
+          start_date: string;
+          end_date: string;
+          budget: number;
+          created_at: string;
+          updated_at: string;
+        };
         Insert: {
-          id?: string
-          created_at?: string
-          updated_at?: string
-          name: string
-          description?: string | null
-          status?: 'active' | 'inactive' | 'archived'
-          start_date?: string | null
-          end_date?: string | null
-          budget?: number | null
-          target_audience?: string | null
-          objectives?: string | null
-          user_id: string
-        }
+          id?: string;
+          name: string;
+          description: string;
+          status: string;
+          start_date: string;
+          end_date: string;
+          budget: number;
+          created_at?: string;
+          updated_at?: string;
+        };
         Update: {
-          id?: string
-          created_at?: string
-          updated_at?: string
-          name?: string
-          description?: string | null
-          status?: 'active' | 'inactive' | 'archived'
-          start_date?: string | null
-          end_date?: string | null
-          budget?: number | null
-          target_audience?: string | null
-          objectives?: string | null
-          user_id?: string
-        }
+          id?: string;
+          name?: string;
+          description?: string;
+          status?: string;
+          start_date?: string;
+          end_date?: string;
+          budget?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
       }
+      links: {
+        Row: {
+          id: string;
+          url: string;
+          campaign_id: string;
+          utm_source: string;
+          utm_medium: string;
+          utm_campaign: string;
+          utm_term?: string;
+          utm_content?: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          url: string;
+          campaign_id: string;
+          utm_source: string;
+          utm_medium: string;
+          utm_campaign: string;
+          utm_term?: string;
+          utm_content?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          url?: string;
+          campaign_id?: string;
+          utm_source?: string;
+          utm_medium?: string;
+          utm_campaign?: string;
+          utm_term?: string;
+          utm_content?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      payment_platforms: {
+        Row: PlatformSettings;
+        Insert: PlatformSettings;
+        Update: Partial<PlatformSettings>;
+      };
+      platform_status: {
+        Row: PlatformStatusData;
+        Insert: PlatformStatusData;
+        Update: Partial<PlatformStatusData>;
+      };
       utms: {
         Row: {
           id: string
@@ -198,47 +237,6 @@ export interface Database {
           user_id?: string
         }
       }
-      payment_platforms: {
-        Row: {
-          id: string
-          created_at: string
-          updated_at: string
-          name: string
-          platform: string
-          client_id: string | null
-          client_secret: string | null
-          webhook_secret: string | null
-          webhook_url: string | null
-          is_active: boolean
-          user_id: string
-        }
-        Insert: {
-          id?: string
-          created_at?: string
-          updated_at?: string
-          name: string
-          platform: string
-          client_id?: string | null
-          client_secret?: string | null
-          webhook_secret?: string | null
-          webhook_url?: string | null
-          is_active?: boolean
-          user_id: string
-        }
-        Update: {
-          id?: string
-          created_at?: string
-          updated_at?: string
-          name?: string
-          platform?: string
-          client_id?: string | null
-          client_secret?: string | null
-          webhook_secret?: string | null
-          webhook_url?: string | null
-          is_active?: boolean
-          user_id?: string
-        }
-      }
     }
     Views: {
       [_ in never]: never
@@ -264,7 +262,7 @@ export interface PaymentPlatform {
   webhook_url: string | null;
   webhook_secret: string | null;
   settings: PlatformSettings;
-  status: PlatformStatus;
+  status: PlatformStatusData;
   created_at: string;
   updated_at: string;
 }

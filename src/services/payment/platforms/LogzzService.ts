@@ -1,267 +1,349 @@
 import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
 import { BasePlatformService } from './BasePlatformService';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
+import crypto from 'crypto';
+import { logger } from '../../../utils/logger';
+
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000; // 1 segundo
+const STATUS_CACHE_TTL = 300000; // 5 minutos
 
 export class LogzzService extends BasePlatformService {
-  protected readonly SANDBOX_API_URL = 'https://sandbox.logzz.com/api/v1';
-  protected readonly PRODUCTION_API_URL = 'https://api.logzz.com/api/v1';
+  protected readonly SANDBOX_API_URL = 'https://sandbox.logzz.com.br/api/v1';
+  protected readonly PRODUCTION_API_URL = 'https://api.logzz.com.br/v1';
+  private statusCache: { data: PlatformStatusData | null; timestamp: number } = { data: null, timestamp: 0 };
 
-  protected getSandboxApiUrl(): string {
-    return this.SANDBOX_API_URL;
+  constructor(config: PlatformConfig) {
+    super(config);
+    this.validateConfig(config);
   }
 
-  protected getProductionApiUrl(): string {
-    return this.PRODUCTION_API_URL;
+  private validateConfig(config: PlatformConfig): void {
+    if (!config.settings?.apiKey) {
+      throw new Error('API key is required for Logzz service');
+    }
+    if (!config.settings?.secretKey) {
+      throw new Error('Secret key is required for Logzz service');
+    }
   }
 
-  protected getHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
+  public getBaseUrl(): string {
+    return this.config.settings?.sandbox 
+      ? this.SANDBOX_API_URL 
+      : this.PRODUCTION_API_URL;
+  }
+
+  public getHeaders(): Record<string, string> {
+    return {
       'Content-Type': 'application/json',
-      'X-API-Key': this.config.settings.apiKey || ''
+      'X-API-Key': this.config.settings?.apiKey || '',
+      'X-Secret-Key': this.config.settings?.secretKey || ''
     };
-    return headers;
   }
 
-  protected mapStatus(status: string): TransactionStatus {
+  private mapLogzzStatus(status: string): TransactionStatus {
     switch (status.toLowerCase()) {
+      case 'completed':
       case 'approved':
       case 'paid':
-        return 'paid';
+        return TransactionStatus.COMPLETED;
       case 'pending':
-        return 'pending';
+      case 'waiting_payment':
+      case 'processing':
+        return TransactionStatus.PENDING;
       case 'failed':
       case 'declined':
-        return 'failed';
+        return TransactionStatus.FAILED;
       case 'refunded':
-        return 'refunded';
+        return TransactionStatus.REFUNDED;
       case 'cancelled':
-        return 'cancelled';
+        return TransactionStatus.CANCELLED;
       case 'inactive':
-        return 'inactive';
+        return TransactionStatus.INACTIVE;
+      case 'error':
+        return TransactionStatus.ERROR;
       default:
-        return 'error';
+        logger.warn(`Unknown status received from Logzz: ${status}`);
+        return TransactionStatus.UNKNOWN;
     }
+  }
+
+  private async retryRequest<T>(
+    requestFn: () => Promise<T>,
+    retries = MAX_RETRIES
+  ): Promise<T> {
+    try {
+      return await requestFn();
+    } catch (error) {
+      if (retries > 0 && this.isRetryableError(error)) {
+        logger.warn(`Retrying request, attempts left: ${retries}`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+        return this.retryRequest(requestFn, retries - 1);
+      }
+      throw error;
+    }
+  }
+
+  private isRetryableError(error: unknown): boolean {
+    if (error instanceof AxiosError) {
+      const statusCode = error.response?.status;
+      return (
+        error.code === 'ECONNABORTED' ||
+        error.code === 'ECONNRESET' ||
+        error.code === 'ETIMEDOUT' ||
+        (statusCode !== undefined && statusCode >= 500)
+      );
+    }
+    return false;
   }
 
   async processPayment(
     amount: number,
     currency: Currency,
-    customer: Customer,
-    metadata?: Record<string, any>
+    paymentMethod: PaymentMethod,
+    paymentData: Record<string, any>
   ): Promise<Transaction> {
-    try {
-      const response = await axios.post(
-        `${this.getApiUrl()}/payments`,
-        {
-          amount,
-          currency,
-          customer,
-          metadata
-        },
-        { headers: this.getHeaders() }
-      );
+    this.validatePaymentData(amount, currency, paymentMethod, paymentData);
 
-      return {
-        id: response.data.id,
-        user_id: customer.id || '',
-        platform_id: this.config.platform_id,
-        platform_type: 'logzz' as const,
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'Logzz'
-        },
-        order_id: response.data.order_id,
-        amount,
-        currency,
-        status: this.mapStatus(response.data.status),
-        customer,
-        payment_method: response.data.payment_method as PaymentMethod,
-        metadata,
-        created_at: new Date(),
-        updated_at: new Date()
-      };
-    } catch (error) {
-      throw this.createError('Failed to process payment', error);
-    }
+    const requestPayload = {
+      amount,
+      currency,
+      payment_method: paymentMethod,
+      ...paymentData
+    };
+
+    return this.retryRequest(async () => {
+      try {
+        const response = await axios.post(
+          `${this.getBaseUrl()}/payments`,
+          requestPayload,
+          { headers: this.getHeaders() }
+        );
+
+        logger.info(`Payment processed successfully: ${response.data.id}`);
+
+        return {
+          id: response.data.id,
+          platform_id: this.config.platform_id,
+          amount: response.data.amount,
+          currency: response.data.currency,
+          status: this.mapLogzzStatus(response.data.status),
+          payment_method: response.data.payment_method,
+          metadata: response.data.metadata,
+          created_at: new Date(response.data.created_at),
+          updated_at: new Date(response.data.updated_at)
+        };
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        logger.error(`Payment processing failed: ${errorMessage}`);
+        throw this.handleError(error);
+      }
+    });
   }
 
-  async processRefund(
+  async refundTransaction(
     transactionId: string,
-    amount?: number,
-    reason?: string
+    amount?: number
   ): Promise<Transaction> {
-    try {
-      const transaction = await this.getTransaction(transactionId);
-      
-      const response = await axios.post(
-        `${this.getApiUrl()}/refunds`,
-        {
+    return this.retryRequest(async () => {
+      try {
+        const requestPayload = {
           transaction_id: transactionId,
-          amount: amount || transaction.amount,
-          reason
-        },
-        { headers: this.getHeaders() }
-      );
+          amount
+        };
 
-      return {
-        id: response.data.id,
-        user_id: transaction.user_id,
-        platform_id: this.config.platform_id,
-        platform_type: 'logzz' as const,
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'Logzz'
-        },
-        order_id: transaction.order_id,
-        amount: amount || transaction.amount,
-        currency: transaction.currency,
-        status: 'refunded',
-        customer: transaction.customer,
-        payment_method: transaction.payment_method,
-        metadata: {
-          ...transaction.metadata,
-          refund_reason: reason,
-          refund_date: new Date().toISOString()
-        },
-        created_at: new Date(),
-        updated_at: new Date()
-      };
-    } catch (error) {
-      throw this.createError('Failed to process refund', error);
-    }
+        const response = await axios.post(
+          `${this.getBaseUrl()}/refunds`,
+          requestPayload,
+          { headers: this.getHeaders() }
+        );
+
+        logger.info(`Refund processed successfully: ${response.data.id}`);
+
+        return {
+          id: response.data.id,
+          platform_id: this.config.platform_id,
+          amount: response.data.amount,
+          currency: response.data.currency,
+          status: TransactionStatus.REFUNDED,
+          payment_method: response.data.payment_method,
+          metadata: response.data.metadata,
+          created_at: new Date(response.data.created_at),
+          updated_at: new Date(response.data.updated_at)
+        };
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        logger.error(`Refund processing failed: ${errorMessage}`);
+        throw this.handleError(error);
+      }
+    });
   }
 
-  async validateWebhook(payload: Record<string, any>, signature: string): Promise<boolean> {
-    try {
-      const calculatedSignature = this.calculateSignature(payload);
-      return calculatedSignature === signature;
-    } catch (error) {
-      throw this.createError('Failed to validate webhook', error);
+  async cancelTransaction(transactionId: string): Promise<Transaction> {
+    return this.retryRequest(async () => {
+      try {
+        const response = await axios.post(
+          `${this.getBaseUrl()}/transactions/${transactionId}/cancel`,
+          {},
+          { headers: this.getHeaders() }
+        );
+
+        logger.info(`Transaction cancelled successfully: ${response.data.id}`);
+
+        return {
+          id: response.data.id,
+          platform_id: this.config.platform_id,
+          amount: response.data.amount,
+          currency: response.data.currency,
+          status: TransactionStatus.CANCELLED,
+          payment_method: response.data.payment_method,
+          metadata: response.data.metadata,
+          created_at: new Date(response.data.created_at),
+          updated_at: new Date(response.data.updated_at)
+        };
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        logger.error(`Transaction cancellation failed: ${errorMessage}`);
+        throw this.handleError(error);
+      }
+    });
+  }
+
+  async validateWebhookSignature(
+    signature: string,
+    payload: Record<string, any>
+  ): Promise<boolean> {
+    const calculatedSignature = this.generateSignature(payload);
+    return calculatedSignature === signature;
+  }
+
+  private validatePaymentData(
+    amount: number,
+    currency: Currency,
+    paymentMethod: PaymentMethod,
+    paymentData: Record<string, any>
+  ): void {
+    if (amount <= 0) {
+      throw new Error('Amount must be greater than zero');
+    }
+    if (!currency) {
+      throw new Error('Currency is required');
+    }
+    if (!paymentMethod) {
+      throw new Error('Payment method is required');
+    }
+    if (!paymentData) {
+      throw new Error('Payment data is required');
     }
   }
 
   async getTransaction(transactionId: string): Promise<Transaction> {
-    try {
-      const response = await axios.get(
-        `${this.getApiUrl()}/transactions/${transactionId}`,
-        { headers: this.getHeaders() }
-      );
+    return this.retryRequest(async () => {
+      try {
+        const response = await axios.get(
+          `${this.getBaseUrl()}/transactions/${transactionId}`,
+          { headers: this.getHeaders() }
+        );
 
-      return {
-        id: response.data.id,
-        user_id: response.data.user_id,
-        platform_id: this.config.platform_id,
-        platform_type: 'logzz' as const,
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'Logzz'
-        },
-        order_id: response.data.order_id,
-        amount: response.data.amount,
-        currency: response.data.currency as Currency,
-        status: this.mapStatus(response.data.status),
-        customer: response.data.customer,
-        payment_method: response.data.payment_method as PaymentMethod,
-        metadata: response.data.metadata,
-        created_at: new Date(response.data.created_at),
-        updated_at: new Date(response.data.updated_at)
-      };
-    } catch (error) {
-      throw this.createError('Failed to get transaction', error);
-    }
+        logger.info(`Transaction details retrieved successfully: ${response.data.id}`);
+
+        return {
+          id: response.data.id,
+          platform_id: this.config.platform_id,
+          amount: response.data.amount,
+          currency: response.data.currency,
+          status: this.mapLogzzStatus(response.data.status),
+          payment_method: response.data.payment_method,
+          metadata: response.data.metadata,
+          created_at: new Date(response.data.created_at),
+          updated_at: new Date(response.data.updated_at)
+        };
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        logger.error(`Failed to retrieve transaction details: ${errorMessage}`);
+        throw this.handleError(error);
+      }
+    });
   }
 
   async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
-    try {
-      const params: Record<string, any> = {};
-      if (startDate) params.start_date = startDate.toISOString();
-      if (endDate) params.end_date = endDate.toISOString();
+    return this.retryRequest(async () => {
+      try {
+        const params: Record<string, any> = {};
+        if (startDate) params.start_date = startDate.toISOString();
+        if (endDate) params.end_date = endDate.toISOString();
 
-      const response = await axios.get(`${this.getApiUrl()}/transactions`, {
-        headers: this.getHeaders(),
-        params
-      });
+        const response = await axios.get(`${this.getBaseUrl()}/transactions`, {
+          headers: this.getHeaders(),
+          params
+        });
 
-      return response.data.transactions.map((tx: any) => ({
-        id: tx.id,
-        user_id: tx.user_id,
-        platform_id: this.config.platform_id,
-        platform_type: 'logzz' as const,
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'Logzz'
-        },
-        order_id: tx.order_id,
-        amount: tx.amount,
-        currency: tx.currency as Currency,
-        status: this.mapStatus(tx.status),
-        customer: tx.customer,
-        payment_method: tx.payment_method as PaymentMethod,
-        metadata: tx.metadata,
-        created_at: new Date(tx.created_at),
-        updated_at: new Date(tx.updated_at)
-      }));
-    } catch (error) {
-      throw this.createError('Failed to get transactions', error);
-    }
+        logger.info(`Retrieved ${response.data.transactions.length} transactions`);
+
+        return response.data.transactions.map((transaction: any) => ({
+          id: transaction.id,
+          platform_id: this.config.platform_id,
+          amount: transaction.amount,
+          currency: transaction.currency,
+          status: this.mapLogzzStatus(transaction.status),
+          payment_method: transaction.payment_method,
+          metadata: transaction.metadata,
+          created_at: new Date(transaction.created_at),
+          updated_at: new Date(transaction.updated_at)
+        }));
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        logger.error(`Failed to retrieve transactions list: ${errorMessage}`);
+        throw this.handleError(error);
+      }
+    });
   }
 
   async getStatus(): Promise<PlatformStatusData> {
-    try {
-      const response = await axios.get(`${this.getApiUrl()}/status`, {
-        headers: this.getHeaders()
-      });
-
-      return {
-        platform_id: this.config.platform_id,
-        status: response.data.is_active ? 'active' as TransactionStatus : 'inactive' as TransactionStatus,
-        error_rate: response.data.error_rate,
-        latency: response.data.latency,
-        uptime: response.data.uptime,
-        last_checked: new Date()
-      };
-    } catch (error) {
-      throw this.createError('Failed to get platform status', error);
+    const now = Date.now();
+    if (this.statusCache.data && now - this.statusCache.timestamp < STATUS_CACHE_TTL) {
+      return this.statusCache.data;
     }
+
+    return this.retryRequest(async () => {
+      try {
+        const response = await axios.get(`${this.getBaseUrl()}/status`, {
+          headers: this.getHeaders()
+        });
+
+        const statusData: PlatformStatusData = {
+          is_active: response.data.is_active,
+          last_checked: new Date(),
+          errors: response.data.errors,
+          ssl_valid: response.data.ssl_valid,
+          status: this.mapLogzzStatus(response.data.status),
+          platform_version: response.data.platform_version,
+          api_version: response.data.api_version,
+          response_time: response.data.response_time,
+          uptime_percentage: response.data.uptime_percentage,
+          error_rate: response.data.error_rate
+        };
+
+        this.statusCache = {
+          data: statusData,
+          timestamp: now
+        };
+
+        return statusData;
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        logger.error(`Failed to get platform status: ${errorMessage}`);
+        throw this.handleError(error);
+      }
+    });
   }
 
-  async updateConfig(config: Partial<PlatformConfig>): Promise<void> {
-    try {
-      await axios.put(
-        `${this.getApiUrl()}/config`,
-        config,
-        { headers: this.getHeaders() }
-      );
-    } catch (error) {
-      throw this.createError('Failed to update platform configuration', error);
-    }
-  }
+  private generateSignature(payload: Record<string, any>): string {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const data = `${this.config.settings?.secretKey}${timestamp}`;
 
-  private calculateSignature(payload: Record<string, any>): string {
-    const data = JSON.stringify(payload);
-    const crypto = require('crypto');
     return crypto
-      .createHmac('sha256', this.config.settings.webhookSecret || '')
+      .createHmac('sha256', this.config.settings?.secretKey || '')
       .update(data)
       .digest('hex');
   }

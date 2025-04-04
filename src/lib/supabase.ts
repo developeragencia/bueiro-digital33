@@ -1,19 +1,165 @@
 import { createClient } from '@supabase/supabase-js';
+import { logger } from '../utils/logger';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables');
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error('Supabase URL and Key are required');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: {
-    persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: true
+    persistSession: true
+  },
+  db: {
+    schema: 'public'
   }
 });
+
+// Adiciona um interceptor para logar erros
+supabase.auth.onAuthStateChange((event, session) => {
+  if (event === 'SIGNED_OUT') {
+    logger.info('User signed out');
+  } else if (event === 'SIGNED_IN') {
+    logger.info('User signed in');
+  } else if (event === 'TOKEN_REFRESHED') {
+    logger.info('Token refreshed');
+  }
+});
+
+// Adiciona um método para verificar a conexão
+export const checkSupabaseConnection = async (): Promise<boolean> => {
+  try {
+    const { data, error } = await supabase.from('transactions').select('count').single();
+    if (error) throw error;
+    return true;
+  } catch (error) {
+    logger.error('Failed to connect to Supabase', { error });
+    return false;
+  }
+};
+
+// Adiciona um método para executar queries com retry
+export const executeQueryWithRetry = async <T>(
+  query: () => Promise<{ data: T | null; error: any }>,
+  maxRetries = 3,
+  delay = 1000
+): Promise<T> => {
+  let lastError;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const { data, error } = await query();
+      if (error) throw error;
+      if (!data) throw new Error('No data returned');
+      return data;
+    } catch (error) {
+      lastError = error;
+      if (i < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+};
+
+// Adiciona um método para inserir dados com validação
+export const insertWithValidation = async <T>(
+  table: string,
+  data: Partial<T>,
+  validateFn: (data: Partial<T>) => boolean
+): Promise<T> => {
+  if (!validateFn(data)) {
+    throw new Error('Invalid data');
+  }
+
+  const { data: result, error } = await supabase
+    .from(table)
+    .insert([data])
+    .select()
+    .single();
+
+  if (error) throw error;
+  if (!result) throw new Error('No data returned');
+
+  return result;
+};
+
+// Adiciona um método para atualizar dados com validação
+export const updateWithValidation = async <T>(
+  table: string,
+  id: string,
+  data: Partial<T>,
+  validateFn: (data: Partial<T>) => boolean
+): Promise<T> => {
+  if (!validateFn(data)) {
+    throw new Error('Invalid data');
+  }
+
+  const { data: result, error } = await supabase
+    .from(table)
+    .update(data)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  if (!result) throw new Error('No data returned');
+
+  return result;
+};
+
+// Adiciona um método para deletar dados com validação
+export const deleteWithValidation = async <T>(
+  table: string,
+  id: string,
+  validateFn: (id: string) => boolean
+): Promise<void> => {
+  if (!validateFn(id)) {
+    throw new Error('Invalid id');
+  }
+
+  const { error } = await supabase
+    .from(table)
+    .delete()
+    .eq('id', id);
+
+  if (error) throw error;
+};
+
+// Adiciona um método para buscar dados com paginação
+export const fetchWithPagination = async <T>(
+  table: string,
+  page = 1,
+  limit = 10,
+  filters?: Record<string, any>
+): Promise<{ data: T[]; total: number }> => {
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  const query = supabase
+    .from(table)
+    .select('*', { count: 'exact' });
+
+  if (filters) {
+    Object.entries(filters).forEach(([key, value]) => {
+      query.eq(key, value);
+    });
+  }
+
+  const { data, error, count } = await query
+    .range(from, to)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  if (!data) throw new Error('No data returned');
+
+  return {
+    data,
+    total: count || 0
+  };
+};
 
 export interface Profile {
   id: string;

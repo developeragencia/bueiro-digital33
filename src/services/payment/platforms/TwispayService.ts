@@ -1,180 +1,136 @@
 import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
 import { BasePlatformService } from './BasePlatformService';
 import axios from 'axios';
+import crypto from 'crypto';
+import { AxiosError } from 'axios';
+import { WebhookPayload } from '../../../types/payment';
 
 export class TwispayService extends BasePlatformService {
   protected readonly SANDBOX_API_URL = 'https://sandbox.twispay.com/api/v1';
-  protected readonly PRODUCTION_API_URL = 'https://api.twispay.com/api/v1';
+  protected readonly PRODUCTION_API_URL = 'https://api.twispay.com/v1';
 
-  protected getHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'X-API-Key': this.config.settings.apiKey || ''
-    };
-    return headers;
+  constructor(config: PlatformConfig) {
+    super(config);
   }
 
-  protected mapStatus(status: string): TransactionStatus {
+  getBaseUrl(): string {
+    return this.config.settings?.sandbox ? this.SANDBOX_API_URL : this.PRODUCTION_API_URL;
+  }
+
+  getHeaders(): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      'X-Twispay-Access-Token': this.config.settings?.apiKey || ''
+    };
+  }
+
+  private mapTwispayStatus(status: string): TransactionStatus {
     switch (status.toLowerCase()) {
-      case 'approved':
-      case 'paid':
-        return 'paid';
       case 'pending':
-        return 'pending';
+        return TransactionStatus.PENDING;
+      case 'processing':
+        return TransactionStatus.PROCESSING;
+      case 'authorized':
+        return TransactionStatus.AUTHORIZED;
+      case 'paid':
+        return TransactionStatus.PAID;
+      case 'completed':
+        return TransactionStatus.COMPLETED;
       case 'failed':
-      case 'declined':
-        return 'failed';
+        return TransactionStatus.FAILED;
       case 'refunded':
-        return 'refunded';
+        return TransactionStatus.REFUNDED;
       case 'cancelled':
-        return 'cancelled';
+        return TransactionStatus.CANCELLED;
+      case 'error':
+        return TransactionStatus.ERROR;
       case 'inactive':
-        return 'inactive';
+        return TransactionStatus.INACTIVE;
+      case 'active':
+        return TransactionStatus.ACTIVE;
       default:
-        return 'error';
+        return TransactionStatus.UNKNOWN;
     }
   }
 
   async processPayment(
     amount: number,
     currency: Currency,
-    customer: Customer,
-    metadata?: Record<string, any>
+    paymentMethod: PaymentMethod,
+    paymentData: Record<string, any>
   ): Promise<Transaction> {
     try {
       const response = await axios.post(
-        `${this.getApiUrl()}/payments`,
+        `${this.getBaseUrl()}/payments`,
         {
           amount,
           currency,
-          customer,
-          metadata
+          payment_method: paymentMethod,
+          ...paymentData
         },
         { headers: this.getHeaders() }
       );
 
       return {
         id: response.data.id,
-        user_id: customer.id || '',
-        platform_id: this.config.platform_id,
-        platform_type: 'twispay',
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'Twispay'
-        },
-        order_id: response.data.order_id,
         amount,
         currency,
-        status: this.mapStatus(response.data.status),
-        customer,
-        payment_method: response.data.payment_method as PaymentMethod,
-        metadata,
-        created_at: new Date(),
-        updated_at: new Date()
+        status: this.mapTwispayStatus(response.data.status),
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        platform_id: this.config.platform_id,
+        metadata: response.data.metadata
       };
     } catch (error) {
-      throw this.createError('Failed to process payment', error);
+      throw this.handleError(error);
     }
   }
 
-  async processRefund(
-    transactionId: string,
-    amount?: number,
-    reason?: string
-  ): Promise<Transaction> {
+  async refundTransaction(transactionId: string, amount?: number): Promise<Transaction> {
     try {
-      const transaction = await this.getTransaction(transactionId);
-      
       const response = await axios.post(
-        `${this.getApiUrl()}/refunds`,
+        `${this.getBaseUrl()}/refunds`,
         {
           transaction_id: transactionId,
-          amount: amount || transaction.amount,
-          reason
+          amount
         },
         { headers: this.getHeaders() }
       );
 
       return {
         id: response.data.id,
-        user_id: transaction.user_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        status: this.mapTwispayStatus(response.data.status),
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
         platform_id: this.config.platform_id,
-        platform_type: 'twispay',
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'Twispay'
-        },
-        order_id: transaction.order_id,
-        amount: amount || transaction.amount,
-        currency: transaction.currency,
-        status: 'refunded',
-        customer: transaction.customer,
-        payment_method: transaction.payment_method,
-        metadata: {
-          ...transaction.metadata,
-          refund_reason: reason,
-          refund_date: new Date().toISOString()
-        },
-        created_at: new Date(),
-        updated_at: new Date()
+        metadata: response.data.metadata
       };
     } catch (error) {
-      throw this.createError('Failed to process refund', error);
-    }
-  }
-
-  async validateWebhook(payload: Record<string, any>, signature: string): Promise<boolean> {
-    try {
-      const calculatedSignature = this.calculateSignature(payload);
-      return calculatedSignature === signature;
-    } catch (error) {
-      throw this.createError('Failed to validate webhook', error);
+      throw this.handleError(error);
     }
   }
 
   async getTransaction(transactionId: string): Promise<Transaction> {
     try {
       const response = await axios.get(
-        `${this.getApiUrl()}/transactions/${transactionId}`,
+        `${this.getBaseUrl()}/transactions/${transactionId}`,
         { headers: this.getHeaders() }
       );
 
       return {
         id: response.data.id,
-        user_id: response.data.user_id,
-        platform_id: this.config.platform_id,
-        platform_type: 'twispay',
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'Twispay'
-        },
-        order_id: response.data.order_id,
         amount: response.data.amount,
-        currency: response.data.currency as Currency,
-        status: this.mapStatus(response.data.status),
-        customer: response.data.customer,
-        payment_method: response.data.payment_method as PaymentMethod,
-        metadata: response.data.metadata,
+        currency: response.data.currency,
+        status: this.mapTwispayStatus(response.data.status),
         created_at: new Date(response.data.created_at),
-        updated_at: new Date(response.data.updated_at)
+        updated_at: new Date(response.data.updated_at),
+        platform_id: this.config.platform_id,
+        metadata: response.data.metadata
       };
     } catch (error) {
-      throw this.createError('Failed to get transaction', error);
+      throw this.handleError(error);
     }
   }
 
@@ -184,77 +140,79 @@ export class TwispayService extends BasePlatformService {
       if (startDate) params.start_date = startDate.toISOString();
       if (endDate) params.end_date = endDate.toISOString();
 
-      const response = await axios.get(`${this.getApiUrl()}/transactions`, {
+      const response = await axios.get(`${this.getBaseUrl()}/transactions`, {
         headers: this.getHeaders(),
         params
       });
 
-      return response.data.transactions.map((tx: any) => ({
-        id: tx.id,
-        user_id: tx.user_id,
+      return response.data.transactions.map((transaction: any) => ({
+        id: transaction.id,
+        amount: transaction.amount,
+        currency: transaction.currency,
+        status: this.mapTwispayStatus(transaction.status),
+        created_at: new Date(transaction.created_at),
+        updated_at: new Date(transaction.updated_at),
         platform_id: this.config.platform_id,
-        platform_type: 'twispay',
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'Twispay'
-        },
-        order_id: tx.order_id,
-        amount: tx.amount,
-        currency: tx.currency as Currency,
-        status: this.mapStatus(tx.status),
-        customer: tx.customer,
-        payment_method: tx.payment_method as PaymentMethod,
-        metadata: tx.metadata,
-        created_at: new Date(tx.created_at),
-        updated_at: new Date(tx.updated_at)
+        metadata: transaction.metadata
       }));
     } catch (error) {
-      throw this.createError('Failed to get transactions', error);
+      throw this.handleError(error);
     }
   }
 
   async getStatus(): Promise<PlatformStatusData> {
     try {
-      const response = await axios.get(`${this.getApiUrl()}/status`, {
+      const response = await axios.get(`${this.getBaseUrl()}/status`, {
         headers: this.getHeaders()
       });
 
       return {
-        platform_id: this.config.platform_id,
-        status: response.data.is_active ? 'active' as TransactionStatus : 'inactive' as TransactionStatus,
-        error_rate: response.data.error_rate,
-        latency: response.data.latency,
-        uptime: response.data.uptime,
-        last_checked: new Date()
+        is_active: response.data.is_active,
+        last_checked: new Date(),
+        errors: response.data.errors,
+        ssl_valid: response.data.ssl_valid,
+        status: this.mapTwispayStatus(response.data.status),
+        api_version: response.data.api_version,
+        response_time: response.data.response_time,
+        uptime_percentage: response.data.uptime_percentage,
+        error_rate: response.data.error_rate
       };
     } catch (error) {
-      throw this.createError('Failed to get platform status', error);
+      throw this.handleError(error);
     }
   }
 
-  async updateConfig(config: Partial<PlatformConfig>): Promise<void> {
+  async cancelTransaction(transactionId: string): Promise<Transaction> {
     try {
-      await axios.put(
-        `${this.getApiUrl()}/config`,
-        config,
+      const response = await axios.post(
+        `${this.getBaseUrl()}/transactions/${transactionId}/cancel`,
+        {},
         { headers: this.getHeaders() }
       );
+
+      return {
+        id: response.data.id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        status: this.mapTwispayStatus(response.data.status),
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at),
+        platform_id: this.config.platform_id,
+        metadata: response.data.metadata
+      };
     } catch (error) {
-      throw this.createError('Failed to update platform configuration', error);
+      throw this.handleError(error);
     }
   }
 
-  private calculateSignature(payload: Record<string, any>): string {
-    const data = JSON.stringify(payload);
-    const crypto = require('crypto');
-    return crypto
-      .createHmac('sha256', this.config.settings.webhookSecret || '')
+  async validateWebhookSignature(signature: string, payload: Record<string, any>): Promise<boolean> {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const data = `${this.config.settings?.secretKey || ''}${timestamp}`;
+    const expectedSignature = crypto
+      .createHmac('sha256', this.config.settings?.secretKey || '')
       .update(data)
       .digest('hex');
+
+    return signature === expectedSignature;
   }
 } 

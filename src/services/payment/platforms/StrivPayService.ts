@@ -1,65 +1,53 @@
 import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
 import { BasePlatformService } from './BasePlatformService';
 import axios from 'axios';
+import crypto from 'crypto';
 
 export class StrivPayService extends BasePlatformService {
   private readonly SANDBOX_API_URL = 'https://sandbox.strivpay.com/api/v1';
   private readonly PRODUCTION_API_URL = 'https://api.strivpay.com/api/v1';
 
-  constructor(platformId: string, apiKey: string, secretKey?: string, sandbox: boolean = true) {
-    super(platformId, apiKey, secretKey, sandbox);
+  constructor(config: PlatformConfig) {
+    super(config);
   }
 
-  protected getSandboxApiUrl(): string {
-    return this.SANDBOX_API_URL;
-  }
-
-  protected getProductionApiUrl(): string {
-    return this.PRODUCTION_API_URL;
+  protected getBaseUrl(): string {
+    return this.config.settings?.sandbox ? this.SANDBOX_API_URL : this.PRODUCTION_API_URL;
   }
 
   protected getHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
+    return {
       'Content-Type': 'application/json',
-      'X-API-Key': this.config.settings.apiKey || ''
+      'X-StrivPay-Access-Token': this.config.settings?.apiKey || '',
+      'X-StrivPay-Signature': this.generateSignature({})
     };
-    return headers;
   }
 
-  protected mapStatus(status: string): TransactionStatus {
-    switch (status.toLowerCase()) {
-      case 'approved':
-      case 'paid':
-        return 'paid';
-      case 'pending':
-        return 'pending';
-      case 'failed':
-      case 'declined':
-        return 'failed';
-      case 'refunded':
-        return 'refunded';
-      case 'cancelled':
-        return 'cancelled';
-      case 'inactive':
-        return 'inactive';
-      default:
-        return 'error';
-    }
+  private mapStrivPayStatus(status: string): TransactionStatus {
+    const statusMap: Record<string, TransactionStatus> = {
+      paid: TransactionStatus.PAID,
+      pending: TransactionStatus.PENDING,
+      failed: TransactionStatus.FAILED,
+      refunded: TransactionStatus.REFUNDED,
+      cancelled: TransactionStatus.CANCELLED,
+      inactive: TransactionStatus.INACTIVE,
+      error: TransactionStatus.ERROR
+    };
+
+    return statusMap[status.toLowerCase()] || TransactionStatus.UNKNOWN;
   }
 
   async processPayment(
     amount: number,
     currency: Currency,
-    customer: Customer,
     metadata?: Record<string, any>
   ): Promise<Transaction> {
     try {
       const response = await axios.post(
-        `${this.getApiUrl()}/payments`,
+        `${this.getBaseUrl()}/payments`,
         {
           amount,
           currency,
-          customer,
           metadata
         },
         { headers: this.getHeaders() }
@@ -70,38 +58,28 @@ export class StrivPayService extends BasePlatformService {
         platform_id: this.config.platform_id,
         amount,
         currency,
-        customer,
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'StrivPay'
-        },
-        status: this.mapStatus(response.data.status),
-        created_at: new Date(),
-        updated_at: new Date(),
-        metadata
+        status: this.mapStrivPayStatus(response.data.status),
+        metadata,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at)
       };
     } catch (error) {
-      throw this.createError('Failed to process payment', error);
+      throw this.handleError(error);
     }
   }
 
-  async processRefund(
+  async refundTransaction(
     transactionId: string,
     amount?: number,
-    reason?: string
+    metadata?: Record<string, any>
   ): Promise<Transaction> {
     try {
       const response = await axios.post(
-        `${this.getApiUrl()}/refunds`,
+        `${this.getBaseUrl()}/refunds`,
         {
           transaction_id: transactionId,
           amount,
-          reason
+          metadata
         },
         { headers: this.getHeaders() }
       );
@@ -110,40 +88,29 @@ export class StrivPayService extends BasePlatformService {
         id: response.data.id,
         platform_id: this.config.platform_id,
         amount: response.data.amount,
-        currency: response.data.currency as Currency,
-        customer: response.data.customer,
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'StrivPay'
-        },
-        status: this.mapStatus(response.data.status),
+        currency: response.data.currency,
+        status: TransactionStatus.REFUNDED,
+        metadata: response.data.metadata,
         created_at: new Date(response.data.created_at),
-        updated_at: new Date(response.data.updated_at),
-        metadata: response.data.metadata
+        updated_at: new Date(response.data.updated_at)
       };
     } catch (error) {
-      throw this.createError('Failed to process refund', error);
+      throw this.handleError(error);
     }
   }
 
-  async validateWebhook(payload: Record<string, any>, signature: string): Promise<boolean> {
-    try {
-      const calculatedSignature = this.calculateSignature(payload);
-      return calculatedSignature === signature;
-    } catch (error) {
-      throw this.createError('Failed to validate webhook', error);
-    }
+  async validateWebhookSignature(
+    payload: Record<string, any>,
+    signature: string
+  ): Promise<boolean> {
+    const calculatedSignature = this.generateSignature(payload);
+    return calculatedSignature === signature;
   }
 
   async getTransaction(transactionId: string): Promise<Transaction> {
     try {
       const response = await axios.get(
-        `${this.getApiUrl()}/transactions/${transactionId}`,
+        `${this.getBaseUrl()}/transactions/${transactionId}`,
         { headers: this.getHeaders() }
       );
 
@@ -151,100 +118,106 @@ export class StrivPayService extends BasePlatformService {
         id: response.data.id,
         platform_id: this.config.platform_id,
         amount: response.data.amount,
-        currency: response.data.currency as Currency,
-        customer: response.data.customer,
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'StrivPay'
-        },
-        status: this.mapStatus(response.data.status),
+        currency: response.data.currency,
+        status: this.mapStrivPayStatus(response.data.status),
+        metadata: response.data.metadata,
         created_at: new Date(response.data.created_at),
-        updated_at: new Date(response.data.updated_at),
-        metadata: response.data.metadata
+        updated_at: new Date(response.data.updated_at)
       };
     } catch (error) {
-      throw this.createError('Failed to get transaction', error);
+      throw this.handleError(error);
     }
   }
 
-  async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
+  async getTransactions(
+    startDate?: Date,
+    endDate?: Date,
+    status?: TransactionStatus,
+    limit?: number,
+    offset?: number
+  ): Promise<Transaction[]> {
     try {
-      const params: Record<string, any> = {};
-      if (startDate) params.start_date = startDate.toISOString();
-      if (endDate) params.end_date = endDate.toISOString();
-
-      const response = await axios.get(`${this.getApiUrl()}/transactions`, {
+      const response = await axios.get(`${this.getBaseUrl()}/transactions`, {
         headers: this.getHeaders(),
-        params
+        params: {
+          start_date: startDate?.toISOString(),
+          end_date: endDate?.toISOString(),
+          status,
+          limit,
+          offset
+        }
       });
 
-      return response.data.transactions.map((tx: any) => ({
-        id: tx.id,
+      return response.data.map((transaction: any) => ({
+        id: transaction.id,
         platform_id: this.config.platform_id,
-        amount: tx.amount,
-        currency: tx.currency as Currency,
-        customer: tx.customer,
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'StrivPay'
-        },
-        status: this.mapStatus(tx.status),
-        created_at: new Date(tx.created_at),
-        updated_at: new Date(tx.updated_at),
-        metadata: tx.metadata
+        amount: transaction.amount,
+        currency: transaction.currency,
+        status: this.mapStrivPayStatus(transaction.status),
+        metadata: transaction.metadata,
+        created_at: new Date(transaction.created_at),
+        updated_at: new Date(transaction.updated_at)
       }));
     } catch (error) {
-      throw this.createError('Failed to get transactions', error);
+      throw this.handleError(error);
     }
   }
 
   async getStatus(): Promise<PlatformStatusData> {
     try {
-      const response = await axios.get(`${this.getApiUrl()}/status`, {
+      const response = await axios.get(`${this.getBaseUrl()}/status`, {
         headers: this.getHeaders()
       });
 
       return {
-        platform_id: this.config.platform_id,
-        status: response.data.is_active ? 'active' as TransactionStatus : 'inactive' as TransactionStatus,
-        success_rate: response.data.success_rate,
-        error_rate: response.data.error_rate,
-        latency: response.data.latency,
-        uptime: response.data.uptime,
-        last_checked: new Date()
+        is_active: response.data.is_active,
+        last_checked: new Date(),
+        errors: response.data.errors,
+        ssl_valid: response.data.ssl_valid,
+        status: this.mapStrivPayStatus(response.data.status),
+        platform_version: response.data.platform_version,
+        api_version: response.data.api_version,
+        response_time: response.data.response_time,
+        uptime_percentage: response.data.uptime_percentage,
+        error_rate: response.data.error_rate
       };
     } catch (error) {
-      throw this.createError('Failed to get platform status', error);
+      throw this.handleError(error);
     }
   }
 
-  async updateConfig(config: Partial<PlatformConfig>): Promise<void> {
+  async cancelTransaction(
+    transactionId: string,
+    metadata?: Record<string, any>
+  ): Promise<Transaction> {
     try {
-      await axios.put(
-        `${this.getApiUrl()}/config`,
-        config,
+      const response = await axios.post(
+        `${this.getBaseUrl()}/transactions/${transactionId}/cancel`,
+        { metadata },
         { headers: this.getHeaders() }
       );
+
+      return {
+        id: response.data.id,
+        platform_id: this.config.platform_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        status: TransactionStatus.CANCELLED,
+        metadata: response.data.metadata,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at)
+      };
     } catch (error) {
-      throw this.createError('Failed to update platform configuration', error);
+      throw this.handleError(error);
     }
   }
 
-  private calculateSignature(payload: Record<string, any>): string {
-    const data = JSON.stringify(payload);
-    const crypto = require('crypto');
+  private generateSignature(payload: Record<string, any>): string {
+    const timestamp = Date.now().toString();
+    const data = `${this.config.settings?.secretKey}${timestamp}`;
+
     return crypto
-      .createHmac('sha256', this.config.settings.webhookSecret || '')
+      .createHmac('sha256', this.config.settings?.secretKey || '')
       .update(data)
       .digest('hex');
   }

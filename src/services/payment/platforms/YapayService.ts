@@ -1,180 +1,123 @@
-import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
+import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod, WebhookPayload } from '../../../types/payment';
 import { BasePlatformService } from './BasePlatformService';
 import axios from 'axios';
+import crypto from 'crypto';
+import { AxiosError } from 'axios';
 
 export class YapayService extends BasePlatformService {
-  protected readonly SANDBOX_API_URL = 'https://sandbox.yapay.com/api/v1';
-  protected readonly PRODUCTION_API_URL = 'https://api.yapay.com/api/v1';
+  protected readonly SANDBOX_API_URL = 'https://sandbox.yapay.com.br/api/v1';
+  protected readonly PRODUCTION_API_URL = 'https://api.yapay.com.br/v1';
 
-  protected getHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'X-API-Key': this.config.settings.apiKey || ''
-    };
-    return headers;
+  constructor(config: PlatformConfig) {
+    super(config);
   }
 
-  protected mapStatus(status: string): TransactionStatus {
-    switch (status.toLowerCase()) {
-      case 'approved':
-      case 'paid':
-        return 'paid';
-      case 'pending':
-        return 'pending';
-      case 'failed':
-      case 'declined':
-        return 'failed';
-      case 'refunded':
-        return 'refunded';
-      case 'cancelled':
-        return 'cancelled';
-      case 'inactive':
-        return 'inactive';
-      default:
-        return 'error';
-    }
+  public getBaseUrl(): string {
+    return this.config.settings?.sandbox 
+      ? this.SANDBOX_API_URL 
+      : this.PRODUCTION_API_URL;
+  }
+
+  public getHeaders(): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      'X-Yapay-Access-Token': this.config.settings?.apiKey || '',
+      'X-Yapay-Signature': this.generateSignature({})
+    };
   }
 
   async processPayment(
     amount: number,
     currency: Currency,
-    customer: Customer,
-    metadata?: Record<string, any>
+    paymentMethod: PaymentMethod,
+    paymentData: Record<string, any>
   ): Promise<Transaction> {
     try {
       const response = await axios.post(
-        `${this.getApiUrl()}/payments`,
+        `${this.getBaseUrl()}/payments`,
         {
           amount,
           currency,
-          customer,
-          metadata
+          payment_method: paymentMethod,
+          ...paymentData
         },
         { headers: this.getHeaders() }
       );
 
       return {
         id: response.data.id,
-        user_id: customer.id || '',
         platform_id: this.config.platform_id,
-        platform_type: 'yapay',
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'Yapay'
-        },
-        order_id: response.data.order_id,
-        amount,
-        currency,
-        status: this.mapStatus(response.data.status),
-        customer,
-        payment_method: response.data.payment_method as PaymentMethod,
-        metadata,
-        created_at: new Date(),
-        updated_at: new Date()
-      };
-    } catch (error) {
-      throw this.createError('Failed to process payment', error);
-    }
-  }
-
-  async processRefund(
-    transactionId: string,
-    amount?: number,
-    reason?: string
-  ): Promise<Transaction> {
-    try {
-      const transaction = await this.getTransaction(transactionId);
-      
-      const response = await axios.post(
-        `${this.getApiUrl()}/refunds`,
-        {
-          transaction_id: transactionId,
-          amount: amount || transaction.amount,
-          reason
-        },
-        { headers: this.getHeaders() }
-      );
-
-      return {
-        id: response.data.id,
-        user_id: transaction.user_id,
-        platform_id: this.config.platform_id,
-        platform_type: 'yapay',
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'Yapay'
-        },
-        order_id: transaction.order_id,
-        amount: amount || transaction.amount,
-        currency: transaction.currency,
-        status: 'refunded',
-        customer: transaction.customer,
-        payment_method: transaction.payment_method,
-        metadata: {
-          ...transaction.metadata,
-          refund_reason: reason,
-          refund_date: new Date().toISOString()
-        },
-        created_at: new Date(),
-        updated_at: new Date()
-      };
-    } catch (error) {
-      throw this.createError('Failed to process refund', error);
-    }
-  }
-
-  async validateWebhook(payload: Record<string, any>, signature: string): Promise<boolean> {
-    try {
-      const calculatedSignature = this.calculateSignature(payload);
-      return calculatedSignature === signature;
-    } catch (error) {
-      throw this.createError('Failed to validate webhook', error);
-    }
-  }
-
-  async getTransaction(transactionId: string): Promise<Transaction> {
-    try {
-      const response = await axios.get(
-        `${this.getApiUrl()}/transactions/${transactionId}`,
-        { headers: this.getHeaders() }
-      );
-
-      return {
-        id: response.data.id,
-        user_id: response.data.user_id,
-        platform_id: this.config.platform_id,
-        platform_type: 'yapay',
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'Yapay'
-        },
-        order_id: response.data.order_id,
         amount: response.data.amount,
-        currency: response.data.currency as Currency,
-        status: this.mapStatus(response.data.status),
-        customer: response.data.customer,
-        payment_method: response.data.payment_method as PaymentMethod,
+        currency: response.data.currency,
+        status: this.mapYapayStatus(response.data.status),
+        payment_method: response.data.payment_method,
         metadata: response.data.metadata,
         created_at: new Date(response.data.created_at),
         updated_at: new Date(response.data.updated_at)
       };
     } catch (error) {
-      throw this.createError('Failed to get transaction', error);
+      throw this.handleError(error);
+    }
+  }
+
+  async refundTransaction(
+    transactionId: string,
+    amount?: number
+  ): Promise<Transaction> {
+    try {
+      const response = await axios.post(
+        `${this.getBaseUrl()}/refunds`,
+        {
+          transaction_id: transactionId,
+          amount
+        },
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        platform_id: this.config.platform_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        status: TransactionStatus.REFUNDED,
+        payment_method: response.data.payment_method,
+        metadata: response.data.metadata,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at)
+      };
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async validateWebhookSignature(
+    signature: string,
+    payload: Record<string, any>
+  ): Promise<boolean> {
+    const calculatedSignature = this.generateSignature(payload);
+    return calculatedSignature === signature;
+  }
+
+  async getTransaction(transactionId: string): Promise<Transaction> {
+    try {
+      const response = await axios.get(
+        `${this.getBaseUrl()}/transactions/${transactionId}`,
+        { headers: this.getHeaders() }
+      );
+
+      return {
+        id: response.data.id,
+        platform_id: this.config.platform_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        status: this.mapYapayStatus(response.data.status),
+        payment_method: response.data.payment_method,
+        metadata: response.data.metadata,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at)
+      };
+    } catch (error) {
+      throw this.handleError(error);
     }
   }
 
@@ -184,76 +127,97 @@ export class YapayService extends BasePlatformService {
       if (startDate) params.start_date = startDate.toISOString();
       if (endDate) params.end_date = endDate.toISOString();
 
-      const response = await axios.get(`${this.getApiUrl()}/transactions`, {
+      const response = await axios.get(`${this.getBaseUrl()}/transactions`, {
         headers: this.getHeaders(),
         params
       });
 
-      return response.data.transactions.map((tx: any) => ({
-        id: tx.id,
-        user_id: tx.user_id,
+      return response.data.transactions.map((transaction: any) => ({
+        id: transaction.id,
         platform_id: this.config.platform_id,
-        platform_type: 'yapay',
-        platform_settings: {
-          webhookUrl: this.config.settings.webhookUrl,
-          webhookSecret: this.config.settings.webhookSecret,
-          currency: this.config.settings.currency,
-          apiKey: this.config.settings.apiKey,
-          secretKey: this.config.settings.secretKey,
-          sandbox: this.config.settings.sandbox,
-          name: 'Yapay'
-        },
-        order_id: tx.order_id,
-        amount: tx.amount,
-        currency: tx.currency as Currency,
-        status: this.mapStatus(tx.status),
-        customer: tx.customer,
-        payment_method: tx.payment_method as PaymentMethod,
-        metadata: tx.metadata,
-        created_at: new Date(tx.created_at),
-        updated_at: new Date(tx.updated_at)
+        amount: transaction.amount,
+        currency: transaction.currency,
+        status: this.mapYapayStatus(transaction.status),
+        payment_method: transaction.payment_method,
+        metadata: transaction.metadata,
+        created_at: new Date(transaction.created_at),
+        updated_at: new Date(transaction.updated_at)
       }));
     } catch (error) {
-      throw this.createError('Failed to get transactions', error);
+      throw this.handleError(error);
     }
   }
 
   async getStatus(): Promise<PlatformStatusData> {
     try {
-      const response = await axios.get(`${this.getApiUrl()}/status`, {
+      const response = await axios.get(`${this.getBaseUrl()}/status`, {
         headers: this.getHeaders()
       });
 
       return {
-        platform_id: this.config.platform_id,
-        status: response.data.is_active ? 'active' as TransactionStatus : 'inactive' as TransactionStatus,
-        error_rate: response.data.error_rate,
-        latency: response.data.latency,
-        uptime: response.data.uptime,
-        last_checked: new Date()
+        is_active: response.data.is_active,
+        last_checked: new Date(),
+        errors: response.data.errors,
+        ssl_valid: response.data.ssl_valid,
+        status: this.mapYapayStatus(response.data.status),
+        platform_version: response.data.platform_version,
+        api_version: response.data.api_version,
+        response_time: response.data.response_time,
+        uptime_percentage: response.data.uptime_percentage,
+        error_rate: response.data.error_rate
       };
     } catch (error) {
-      throw this.createError('Failed to get platform status', error);
+      throw this.handleError(error);
     }
   }
 
-  async updateConfig(config: Partial<PlatformConfig>): Promise<void> {
+  async cancelTransaction(transactionId: string): Promise<Transaction> {
     try {
-      await axios.put(
-        `${this.getApiUrl()}/config`,
-        config,
+      const response = await axios.post(
+        `${this.getBaseUrl()}/transactions/${transactionId}/cancel`,
+        {},
         { headers: this.getHeaders() }
       );
+
+      return {
+        id: response.data.id,
+        platform_id: this.config.platform_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
+        status: TransactionStatus.CANCELLED,
+        payment_method: response.data.payment_method,
+        metadata: response.data.metadata,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at)
+      };
     } catch (error) {
-      throw this.createError('Failed to update platform configuration', error);
+      throw this.handleError(error);
     }
   }
 
-  private calculateSignature(payload: Record<string, any>): string {
-    const data = JSON.stringify(payload);
-    const crypto = require('crypto');
+  private mapYapayStatus(status: string): TransactionStatus {
+    const statusMap: Record<string, TransactionStatus> = {
+      'pending': TransactionStatus.PENDING,
+      'processing': TransactionStatus.PROCESSING,
+      'authorized': TransactionStatus.AUTHORIZED,
+      'paid': TransactionStatus.PAID,
+      'completed': TransactionStatus.COMPLETED,
+      'failed': TransactionStatus.FAILED,
+      'refunded': TransactionStatus.REFUNDED,
+      'cancelled': TransactionStatus.CANCELLED,
+      'error': TransactionStatus.ERROR,
+      'inactive': TransactionStatus.INACTIVE
+    };
+
+    return statusMap[status.toLowerCase()] || TransactionStatus.UNKNOWN;
+  }
+
+  private generateSignature(payload: Record<string, any>): string {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const data = `${this.config.settings?.apiKey}:${timestamp}`;
+
     return crypto
-      .createHmac('sha256', this.config.settings.webhookSecret || '')
+      .createHmac('sha256', this.config.settings?.secretKey || '')
       .update(data)
       .digest('hex');
   }

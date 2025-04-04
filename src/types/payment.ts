@@ -1,49 +1,82 @@
-export type PaymentPlatformType =
-  | 'stripe'
-  | 'paypal'
-  | 'mercadopago'
-  | 'pagseguro'
-  | 'cielo'
-  | 'rede'
-  | 'getnet'
-  | 'stone'
-  | 'pepper'
-  | 'logzz'
-  | 'maxweb'
-  | 'mundpay'
-  | 'nitro'
-  | 'pagtrust'
-  | 'shopify'
-  | 'strivpay'
-  | 'systeme'
-  | 'woocommerce'
-  | 'yapay'
-  | 'kiwify';
+export enum TransactionStatus {
+  PENDING = 'pending',
+  PROCESSING = 'processing',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
+  REFUNDED = 'refunded',
+  CANCELLED = 'cancelled',
+  INACTIVE = 'inactive',
+  ACTIVE = 'active',
+  ERROR = 'error',
+  UNKNOWN = 'unknown'
+}
 
-export type TransactionStatus =
-  | 'pending'
-  | 'processing'
-  | 'completed'
-  | 'failed'
-  | 'refunded'
-  | 'partially_refunded'
-  | 'chargeback'
-  | 'dispute'
-  | 'authorized'
-  | 'cancelled'
-  | 'expired';
+export enum Currency {
+  BRL = 'BRL',
+  USD = 'USD',
+  EUR = 'EUR',
+  GBP = 'GBP',
+  JPY = 'JPY',
+  CAD = 'CAD',
+  AUD = 'AUD',
+  CHF = 'CHF',
+  CNY = 'CNY',
+  INR = 'INR'
+}
 
-export type PlatformStatus = 'active' | 'inactive' | 'error' | 'maintenance';
+export enum PaymentPlatform {
+  APPMAX = 'appmax',
+  CARTPANDA = 'cartpanda',
+  CLICKBANK = 'clickbank',
+  DIGISTORE24 = 'digistore24',
+  DOPPUS = 'doppus',
+  FORTPAY = 'fortpay',
+  FRC = 'frc',
+  HUBLA = 'hubla',
+  KIWIFY = 'kiwify',
+  LOGZZ = 'logzz',
+  MAXWEB = 'maxweb',
+  MUNDPAY = 'mundpay',
+  NITRO = 'nitro',
+  PAGTRUST = 'pagtrust',
+  PEPPER = 'pepper',
+  SHOPIFY = 'shopify',
+  STRIVPAY = 'strivpay',
+  SYSTEME = 'systeme',
+  TICTO = 'ticto',
+  TWISPAY = 'twispay',
+  WOOCOMMERCE = 'woocommerce',
+  YAPAY = 'yapay'
+}
 
-export type Currency = 'BRL' | 'USD' | 'EUR';
+export enum PaymentMethod {
+  CREDIT_CARD = 'credit_card',
+  DEBIT_CARD = 'debit_card',
+  PIX = 'pix',
+  BOLETO = 'boleto',
+  BANK_TRANSFER = 'bank_transfer',
+  WALLET = 'wallet',
+  CRYPTO = 'crypto',
+  CASH = 'cash',
+  OTHER = 'other'
+}
 
-export type PaymentMethod =
-  | 'credit_card'
-  | 'debit_card'
-  | 'boleto'
-  | 'pix'
-  | 'bank_transfer'
-  | 'crypto';
+export interface Customer {
+  name: string;
+  email: string;
+  document?: string;
+  phone?: string;
+  address?: {
+    street?: string;
+    number?: string;
+    complement?: string;
+    neighborhood?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+    zip_code?: string;
+  };
+}
 
 export interface Address {
   street: string;
@@ -56,95 +89,63 @@ export interface Address {
   zipcode: string;
 }
 
-export interface Customer {
-  id?: string;
-  name: string;
-  email: string;
-  phone?: string;
-  document?: string;
-  address?: {
-    street?: string;
-    number?: string;
-    complement?: string;
-    neighborhood?: string;
-    city?: string;
-    state?: string;
-    country?: string;
-    zipcode?: string;
-  };
-  metadata?: Record<string, unknown>;
-  created_at?: Date;
-  updated_at?: Date;
-}
-
 export interface PlatformSettings {
-  webhookUrl?: string;
-  webhookSecret?: string;
-  currency: Currency;
-  apiKey: string;
-  secretKey?: string;
-  sandbox: boolean;
+  id: string;
   name: string;
+  platform: PaymentPlatform;
+  logo: string;
   description?: string;
-  logo?: string;
-  features?: PlatformFeatures;
-  limits?: PlatformLimits;
-  credentials?: PlatformCredentials;
-  webhook?: WebhookConfig;
-  metadata?: Record<string, unknown>;
-  active?: boolean;
+  settings: {
+    webhookUrl?: string;
+    webhookSecret?: string;
+    currency?: Currency;
+    apiKey?: string;
+    secretKey?: string;
+    sandbox?: boolean;
+    name?: string;
+  };
 }
 
 export interface PlatformConfig {
-  user_id: string;
   platform_id: string;
-  platform_type: PaymentPlatformType;
-  settings: PlatformSettings;
-  created_at?: Date;
-  updated_at?: Date;
+  platform_type: string;
+  settings: {
+    apiKey?: string;
+    secretKey?: string;
+    sandbox?: boolean;
+    webhookSecret?: string;
+    [key: string]: any;
+  };
 }
 
 export interface PlatformStatusData {
-  platform_id: string;
-  status: TransactionStatus;
-  error_rate: number;
-  success_rate: number;
   is_active: boolean;
+  error_rate: number;
+  status: TransactionStatus;
   last_checked: Date;
-  created_at: Date;
-  updated_at: Date;
-  metadata?: Record<string, any>;
-}
-
-export interface PaymentPlatform {
-  id: string;
-  name: string;
-  description: string;
-  status: PlatformStatusData;
-  metadata?: Record<string, any>;
 }
 
 export interface Transaction {
   id: string;
   user_id: string;
   platform_id: string;
-  platform_type: PaymentPlatformType;
+  platform_type: string;
+  platform_settings: Record<string, any>;
   order_id: string;
   amount: number;
   currency: Currency;
+  status: TransactionStatus;
   customer: Customer;
   payment_method: PaymentMethod;
-  platform_settings: PlatformSettings;
-  status: TransactionStatus;
+  metadata: Record<string, any>;
   created_at: Date;
   updated_at: Date;
-  metadata?: Record<string, any>;
 }
 
 export interface AvailablePlatform {
   id: string;
   name: string;
-  platform: PaymentPlatformType;
+  platform: PaymentPlatform;
   logo: string;
   description?: string;
   features?: PlatformFeatures;
@@ -229,16 +230,73 @@ export interface PlatformLimits {
 }
 
 export interface PlatformMetrics {
-  totalTransactions: number;
-  totalVolume: number;
-  successRate: number;
-  averageTransactionValue: number;
-  refundRate: number;
-  chargebackRate: number;
-  period: {
-    start: Date;
-    end: Date;
-  };
-  currency: Currency;
-  metadata?: Record<string, unknown>;
+  total_transactions: number;
+  total_amount: number;
+  success_rate: number;
+  error_rate: number;
+  average_response_time: number;
+  uptime_percentage: number;
+}
+
+export interface WebhookPayload {
+  event: string;
+  data: Record<string, any>;
+  timestamp: number;
+  signature: string;
+}
+
+export interface ReconciliationResult {
+  platform_id: string;
+  missing_transactions: Transaction[];
+  mismatched_transactions: Transaction[];
+  reconciled_transactions: Transaction[];
+  total_amount_difference: number;
+  reconciliation_date: string;
+}
+
+export interface FraudCheckResult {
+  transaction_id: string;
+  risk_score: number;
+  risk_factors: string[];
+  is_fraudulent: boolean;
+  check_date: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  platform_id: string;
+  action: string;
+  details: Record<string, any>;
+  user_id?: string;
+  created_at: string;
+}
+
+export interface ReportData {
+  start_date: Date;
+  end_date: Date;
+  platform_id: string;
+  metrics: PlatformMetrics;
+  format: 'csv' | 'json' | 'pdf';
+}
+
+export interface PaymentData {
+  user_id: string;
+  customer: Customer;
+  description?: string;
+  order_id?: string;
+  invoice_id?: string;
+  [key: string]: any;
+}
+
+export interface RefundData {
+  transaction_id: string;
+  amount?: number;
+  reason?: string;
+  [key: string]: any;
+}
+
+export interface WebhookData {
+  signature: string;
+  payload: Record<string, any>;
+  [key: string]: any;
 } 
