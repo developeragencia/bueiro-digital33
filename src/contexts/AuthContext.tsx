@@ -1,7 +1,7 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { AuthContextType, User } from '../types/auth';
+import { AuthContextType, User } from '../hooks/useAuth';
 import { useToast } from '../lib/hooks/use-toast';
 
 export const AuthContext = createContext<AuthContextType | null>(null);
@@ -10,11 +10,14 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
-export function AuthProvider({ children }: AuthProviderProps) {
+export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const toast = useToast();
+
+  const isAdmin = user?.role === 'admin';
+  const isAuthenticated = !!user;
 
   useEffect(() => {
     // Verificar sessão atual
@@ -49,6 +52,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
     };
   }, []);
 
+  useEffect(() => {
+    // Verificar se há um usuário salvo no localStorage
+    const savedUser = localStorage.getItem('user');
+    if (savedUser) {
+      setUser(JSON.parse(savedUser));
+    }
+  }, []);
+
+  useEffect(() => {
+    // Salvar usuário no localStorage quando mudar
+    if (user) {
+      localStorage.setItem('user', JSON.stringify(user));
+    } else {
+      localStorage.removeItem('user');
+    }
+  }, [user]);
+
   const login = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({
       email,
@@ -73,8 +93,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const value = {
     user,
-    isAuthenticated: !!user,
-    isAdmin: user?.role === 'admin',
+    isAuthenticated,
+    isAdmin,
     signIn: login,
     signOut,
     register,
@@ -90,7 +110,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       {children}
     </AuthContext.Provider>
   );
-}
+};
 
 export function useAuth() {
   const context = useContext(AuthContext);

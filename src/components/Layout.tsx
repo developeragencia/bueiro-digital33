@@ -1,10 +1,15 @@
+import React from 'react';
 import { Outlet } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import AdminNavbar from './layout/AdminNavbar';
-import AdminSidebar from './layout/AdminSidebar';
+import { AdminSidebar } from './layout/AdminSidebar';
 
-export function Layout() {
-  const { isAdmin, isAuthenticated } = useAuth();
+interface LayoutProps {
+  children: React.ReactNode;
+}
+
+export const Layout: React.FC<LayoutProps> = ({ children }) => {
+  const { isAdmin, isAuthenticated, user } = useAuth();
 
   if (!isAuthenticated) {
     return <Outlet />;
@@ -14,10 +19,10 @@ export function Layout() {
     return (
       <div className="min-h-screen bg-gray-100">
         <AdminNavbar />
-        <AdminSidebar />
+        {user && <AdminSidebar />}
         <main className="py-10 lg:pl-72">
           <div className="px-4 sm:px-6 lg:px-8">
-            <Outlet />
+            {children}
           </div>
         </main>
       </div>
@@ -26,11 +31,14 @@ export function Layout() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <main className="py-10">
-        <div className="px-4 sm:px-6 lg:px-8">
-          <Outlet />
-        </div>
-      </main>
+      {user && <AdminSidebar />}
+      <div className={user ? "ml-64" : ""}>
+        <main className="py-10">
+          <div className="px-4 sm:px-6 lg:px-8">
+            {children}
+          </div>
+        </main>
+      </div>
     </div>
   );
-}
+};

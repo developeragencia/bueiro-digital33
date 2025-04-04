@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AlertCircle, Copy, CheckCircle, Loader2 } from 'lucide-react';
 import { INTEGRATION_CONFIGS, getIntegrationSettings, saveIntegrationSettings } from '../lib/integrations';
 import { useToast } from '../hooks/use-toast';
 
 interface IntegrationSetupProps {
   platform: string;
-  onSave?: () => void;
+  onSave: (config: any) => Promise<void>;
 }
 
 type IntegrationConfig = {
@@ -16,7 +16,7 @@ type IntegrationConfig = {
   events?: Record<string, { template: string }>;
 };
 
-export default function IntegrationSetup({ platform, onSave }: IntegrationSetupProps) {
+export const IntegrationSetup: React.FC<IntegrationSetupProps> = ({ platform, onSave }) => {
   const [id, setId] = useState('');
   const [secretKey, setSecretKey] = useState('');
   const [webhookUrl, setWebhookUrl] = useState('');
@@ -24,7 +24,7 @@ export default function IntegrationSetup({ platform, onSave }: IntegrationSetupP
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
-  const toast = useToast();
+  const { success, error: showError } = useToast();
 
   const config = INTEGRATION_CONFIGS[platform as keyof typeof INTEGRATION_CONFIGS] as IntegrationConfig;
 
@@ -72,10 +72,10 @@ export default function IntegrationSetup({ platform, onSave }: IntegrationSetupP
       // Simulate API test
       await new Promise(resolve => setTimeout(resolve, 1500));
       setTestStatus('success');
-      toast.success('Conexão testada com sucesso!');
+      success('Conexão testada com sucesso!');
     } catch (err) {
       setTestStatus('error');
-      toast.error('Erro ao testar conexão');
+      showError('Erro ao testar conexão');
     }
   };
 
@@ -90,12 +90,12 @@ export default function IntegrationSetup({ platform, onSave }: IntegrationSetupP
       };
 
       await saveIntegrationSettings(platform, settings);
-      toast.success('Configurações salvas com sucesso!');
-      onSave?.();
+      success('Configurações salvas com sucesso!');
+      await onSave(settings);
     } catch (err) {
       console.error('Error saving settings:', err);
       setError('Erro ao salvar configurações');
-      toast.error('Erro ao salvar configurações');
+      showError('Erro ao salvar configurações');
     } finally {
       setLoading(false);
     }
@@ -105,11 +105,11 @@ export default function IntegrationSetup({ platform, onSave }: IntegrationSetupP
     try {
       await navigator.clipboard.writeText(webhookUrl);
       setCopied(true);
-      toast.success('URL copiada para a área de transferência');
+      success('URL copiada para a área de transferência');
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Error copying to clipboard:', err);
-      toast.error('Erro ao copiar URL');
+      showError('Erro ao copiar URL');
     }
   };
 
@@ -222,4 +222,4 @@ export default function IntegrationSetup({ platform, onSave }: IntegrationSetupP
       </div>
     </div>
   );
-}
+};
