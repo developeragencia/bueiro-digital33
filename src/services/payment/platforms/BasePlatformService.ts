@@ -18,43 +18,60 @@ type TransactionFilters = {
 };
 
 export abstract class BasePlatformService {
-  protected config: PlatformConfig;
-  protected readonly SANDBOX_API_URL: string = '';
-  protected readonly PRODUCTION_API_URL: string = '';
+  constructor(protected config: PlatformConfig) {}
 
-  constructor(config: PlatformConfig) {
-    this.config = config;
-  }
-
-  protected abstract getBaseUrl(): string;
-  protected abstract getHeaders(): Record<string, string>;
-  protected abstract mapStatus(status: string): TransactionStatus;
-
-  public abstract processPayment(
+  abstract processPayment(
     amount: number,
     currency: Currency,
     paymentMethod: PaymentMethod,
     paymentData: Record<string, any>
   ): Promise<Transaction>;
 
-  public abstract refundTransaction(
+  abstract refundTransaction(
     transactionId: string,
-    amount?: number,
-    reason?: string
+    amount?: number
   ): Promise<Transaction>;
 
-  public abstract getTransaction(transactionId: string): Promise<Transaction>;
+  abstract getTransaction(transactionId: string): Promise<Transaction>;
 
-  public abstract getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]>;
+  abstract getTransactions(
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<Transaction[]>;
 
-  public abstract getStatus(): Promise<PlatformStatusData>;
+  abstract getStatus(): Promise<PlatformStatusData>;
 
-  public abstract cancelTransaction(transactionId: string): Promise<Transaction>;
+  abstract cancelTransaction(transactionId: string): Promise<Transaction>;
 
-  public abstract validateWebhookSignature(
+  abstract validateWebhookSignature(
     signature: string,
     payload: Record<string, any>
   ): Promise<boolean>;
+
+  protected getApiUrl(): string {
+    return this.config.settings.sandbox
+      ? this.getSandboxApiUrl()
+      : this.getProductionApiUrl();
+  }
+
+  protected abstract getSandboxApiUrl(): string;
+  protected abstract getProductionApiUrl(): string;
+
+  protected getHeaders(): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${this.config.settings.apiKey}`,
+    };
+  }
+
+  protected handleError(error: any): never {
+    if (error.response) {
+      throw new Error(
+        `API Error: ${error.response.status} - ${error.response.data.message}`
+      );
+    }
+    throw error;
+  }
 
   updateConfig(newConfig: Partial<PlatformConfig>): void {
     this.config = { ...this.config, ...newConfig };
@@ -69,7 +86,7 @@ export abstract class BasePlatformService {
     try {
       const response = await axios({
         method,
-        url: `${this.getBaseUrl()}${endpoint}`,
+        url: `${this.getApiUrl()}${endpoint}`,
         headers: this.getHeaders(),
         data,
         params
@@ -79,13 +96,6 @@ export abstract class BasePlatformService {
     } catch (error) {
       throw this.handleError(error);
     }
-  }
-
-  protected handleError(error: unknown): Error {
-    if (error instanceof Error) {
-      return error;
-    }
-    return new Error('An unknown error occurred');
   }
 
   protected async saveTransaction(transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>): Promise<Transaction> {
@@ -219,5 +229,30 @@ export abstract class BasePlatformService {
 
   protected async getTransactionsByPlatformId(): Promise<Transaction[]> {
     return this.listTransactions({ platformId: this.config.platform_id });
+  }
+
+  protected getApiKey(): string {
+    if (!this.config.settings.apiKey) {
+      throw new Error('API Key not configured');
+    }
+    return this.config.settings.apiKey;
+  }
+
+  protected getSecretKey(): string {
+    if (!this.config.settings.secretKey) {
+      throw new Error('Secret Key not configured');
+    }
+    return this.config.settings.secretKey;
+  }
+
+  protected getWebhookSecret(): string {
+    if (!this.config.settings.webhookSecret) {
+      throw new Error('Webhook Secret not configured');
+    }
+    return this.config.settings.webhookSecret;
+  }
+
+  protected isSandbox(): boolean {
+    return this.config.settings.sandbox || false;
   }
 } 

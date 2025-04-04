@@ -24,30 +24,7 @@ export enum Currency {
   INR = 'INR'
 }
 
-export enum PaymentPlatform {
-  APPMAX = 'appmax',
-  CARTPANDA = 'cartpanda',
-  CLICKBANK = 'clickbank',
-  DIGISTORE24 = 'digistore24',
-  DOPPUS = 'doppus',
-  FORTPAY = 'fortpay',
-  FRC = 'frc',
-  HUBLA = 'hubla',
-  KIWIFY = 'kiwify',
-  LOGZZ = 'logzz',
-  MAXWEB = 'maxweb',
-  MUNDPAY = 'mundpay',
-  NITRO = 'nitro',
-  PAGTRUST = 'pagtrust',
-  PEPPER = 'pepper',
-  SHOPIFY = 'shopify',
-  STRIVPAY = 'strivpay',
-  SYSTEME = 'systeme',
-  TICTO = 'ticto',
-  TWISPAY = 'twispay',
-  WOOCOMMERCE = 'woocommerce',
-  YAPAY = 'yapay'
-}
+export type PaymentPlatform = 'shopify' | 'systeme' | 'strivpay';
 
 export enum PaymentMethod {
   CREDIT_CARD = 'credit_card',
@@ -62,31 +39,23 @@ export enum PaymentMethod {
 }
 
 export interface Customer {
+  id?: string;
   name: string;
   email: string;
   document?: string;
   phone?: string;
-  address?: {
-    street?: string;
-    number?: string;
-    complement?: string;
-    neighborhood?: string;
-    city?: string;
-    state?: string;
-    country?: string;
-    zip_code?: string;
-  };
+  address?: Address;
 }
 
 export interface Address {
   street: string;
-  number?: string;
+  number: string;
   complement?: string;
-  neighborhood?: string;
+  neighborhood: string;
   city: string;
   state: string;
   country: string;
-  zipcode: string;
+  zipCode: string;
 }
 
 export interface PlatformSettings {
@@ -107,37 +76,75 @@ export interface PlatformSettings {
 }
 
 export interface PlatformConfig {
-  platform_id: string;
-  platform_type: string;
+  id: string;
+  name: string;
+  platform: PaymentPlatform;
   settings: {
-    apiKey?: string;
-  secretKey?: string;
-    sandbox?: boolean;
+    apiKey: string;
+    secretKey: string;
     webhookSecret?: string;
+    sandbox?: boolean;
     [key: string]: any;
+  };
+  enabled: boolean;
+}
+
+export interface ShopifyConfig extends PlatformConfig {
+  platform: 'shopify';
+  settings: {
+    apiKey: string;
+    secretKey: string;
+    webhookSecret: string;
+    shopDomain: string;
+    accessToken: string;
+    sandbox?: boolean;
+  };
+}
+
+export interface SystemeConfig extends PlatformConfig {
+  platform: 'systeme';
+  settings: {
+    apiKey: string;
+    secretKey: string;
+    webhookSecret: string;
+    merchantId: string;
+    sandbox?: boolean;
+  };
+}
+
+export interface StrivPayConfig extends PlatformConfig {
+  platform: 'strivpay';
+  settings: {
+    apiKey: string;
+    secretKey: string;
+    webhookSecret: string;
+    accountId: string;
+    sandbox?: boolean;
   };
 }
 
 export interface PlatformStatusData {
   is_active: boolean;
   error_rate: number;
-  status: TransactionStatus;
   last_checked: Date;
+  errors?: string[];
+  ssl_valid?: boolean;
+  status?: string;
+  platform_version?: string;
+  api_version?: string;
+  response_time?: number;
+  uptime_percentage?: number;
 }
 
 export interface Transaction {
   id: string;
-  user_id: string;
   platform_id: string;
-  platform_type: string;
-  platform_settings: Record<string, any>;
-  order_id: string;
   amount: number;
   currency: Currency;
   status: TransactionStatus;
-  customer: Customer;
+  customer?: Customer;
   payment_method: PaymentMethod;
-  metadata: Record<string, any>;
+  metadata?: Record<string, any>;
   created_at: Date;
   updated_at: Date;
 }
@@ -299,4 +306,22 @@ export interface WebhookData {
   signature: string;
   payload: Record<string, any>;
   [key: string]: any;
+}
+
+export interface PaymentPlatformConfig {
+  id: string;
+  name: string;
+  apiKey?: string;
+  secretKey?: string;
+  webhookUrl?: string;
+  enabled: boolean;
+  testMode: boolean;
+}
+
+export interface PaymentPlatformService {
+  getConfig: (platform: PaymentPlatform) => Promise<PaymentPlatformConfig>;
+  getAllConfigs: () => Promise<Record<PaymentPlatform, PaymentPlatformConfig>>;
+  saveConfig: (platform: PaymentPlatform, config: PaymentPlatformConfig) => Promise<void>;
+  updateConfig: (platform: PaymentPlatform, config: Partial<PaymentPlatformConfig>) => Promise<void>;
+  testConnection: (platform: PaymentPlatform) => Promise<boolean>;
 } 

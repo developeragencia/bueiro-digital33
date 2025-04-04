@@ -1,4 +1,4 @@
-import { PlatformConfig } from '../../../types/payment';
+import { PlatformConfig, PaymentPlatform } from '../../../types/payment';
 import { BasePlatformService } from './BasePlatformService';
 import { MundPayService } from './MundPayService';
 import { MaxWebService } from './MaxWebService';
@@ -12,6 +12,17 @@ import { PagTrustService } from './PagTrustService';
 import { HublaService } from './HublaService';
 import { KiwifyService } from './KiwifyService';
 import { FRCService } from './FRCService';
+import { StrivPayService } from './StrivPayService';
+
+export interface PaymentPlatformProvider {
+  processPayment: (amount: number, currency: string, paymentMethod: string, paymentData: Record<string, any>) => Promise<any>;
+  refundTransaction: (transactionId: string, amount?: number) => Promise<any>;
+  getTransaction: (transactionId: string) => Promise<any>;
+  getTransactions: (startDate?: Date, endDate?: Date) => Promise<any[]>;
+  getStatus: () => Promise<any>;
+  cancelTransaction: (transactionId: string) => Promise<any>;
+  validateWebhookSignature: (signature: string, payload: Record<string, any>) => Promise<boolean>;
+}
 
 export function createPlatformService(config: PlatformConfig): BasePlatformService {
   if (!config.settings) {
@@ -50,4 +61,22 @@ export function createPlatformService(config: PlatformConfig): BasePlatformServi
     default:
       throw new Error(`Plataforma não suportada: ${config.platform_id}`);
   }
-} 
+}
+
+export function getPlatformService(platform: PaymentPlatform, config: PlatformConfig): BasePlatformService {
+  switch (platform) {
+    case 'shopify':
+      return new ShopifyService(config);
+    case 'systeme':
+      return new SystemeService(config);
+    case 'strivpay':
+      return new StrivPayService(config);
+    default:
+      throw new Error(`Plataforma de pagamento não suportada: ${platform}`);
+  }
+}
+
+export { BasePlatformService } from './BasePlatformService';
+export { ShopifyService } from './ShopifyService';
+export { SystemeService } from './SystemeService';
+export { StrivPayService } from './StrivPayService'; 

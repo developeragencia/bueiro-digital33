@@ -1,4 +1,4 @@
-import { PlatformConfig, Transaction, TransactionStatus, Currency, PaymentMethod } from '../../types/payment';
+import { PlatformConfig, Transaction, TransactionStatus, Currency, PaymentMethod, PaymentPlatform } from '../../types/payment';
 import { BasePlatformService } from './platforms/BasePlatformService';
 import { PagarMeService } from './platforms/PagarMeService';
 import { MercadoPagoService } from './platforms/MercadoPagoService';
@@ -14,6 +14,7 @@ import { HublaService } from './platforms/HublaService';
 import { TictoService } from './platforms/TictoService';
 import { KiwifyService } from './platforms/KiwifyService';
 import { logger } from '../../utils/logger';
+import { getPlatformService } from './platforms';
 
 export class PaymentService {
   private services: Map<string, BasePlatformService> = new Map();
@@ -70,74 +71,88 @@ export class PaymentService {
   }
 
   public async processPayment(
-    platformId: string,
+    platform: PaymentPlatform,
     amount: number,
     currency: Currency,
     paymentMethod: PaymentMethod,
     paymentData: Record<string, any>
   ): Promise<Transaction> {
-    const service = this.services.get(platformId);
-    if (!service) {
-      throw new Error(`Payment service not found for platform ${platformId}`);
-    }
+    const service = getPlatformService(platform, {
+      id: platform,
+      name: platform,
+      platform,
+      settings: {
+        apiKey: process.env.VITE_PAYMENT_API_KEY || '',
+        secretKey: process.env.VITE_PAYMENT_SECRET_KEY || '',
+        webhookSecret: process.env.VITE_PAYMENT_WEBHOOK_SECRET,
+        sandbox: process.env.NODE_ENV !== 'production'
+      },
+      enabled: true
+    });
 
-    try {
-      return await service.processPayment(amount, currency, paymentMethod, paymentData);
-    } catch (error) {
-      logger.error(`Error processing payment for platform ${platformId}:`, error);
-      throw error;
-    }
+    return service.processPayment(amount, currency, paymentMethod, paymentData);
   }
 
   public async refundTransaction(
-    platformId: string,
+    platform: PaymentPlatform,
     transactionId: string,
-    amount?: number,
-    reason?: string
+    amount?: number
   ): Promise<Transaction> {
-    const service = this.services.get(platformId);
-    if (!service) {
-      throw new Error(`Payment service not found for platform ${platformId}`);
-    }
+    const service = getPlatformService(platform, {
+      id: platform,
+      name: platform,
+      platform,
+      settings: {
+        apiKey: process.env.VITE_PAYMENT_API_KEY || '',
+        secretKey: process.env.VITE_PAYMENT_SECRET_KEY || '',
+        webhookSecret: process.env.VITE_PAYMENT_WEBHOOK_SECRET,
+        sandbox: process.env.NODE_ENV !== 'production'
+      },
+      enabled: true
+    });
 
-    try {
-      return await service.refundTransaction(transactionId, amount, reason);
-    } catch (error) {
-      logger.error(`Error refunding transaction for platform ${platformId}:`, error);
-      throw error;
-    }
+    return service.refundTransaction(transactionId, amount);
   }
 
-  public async getTransaction(platformId: string, transactionId: string): Promise<Transaction> {
-    const service = this.services.get(platformId);
-    if (!service) {
-      throw new Error(`Payment service not found for platform ${platformId}`);
-    }
+  public async getTransaction(
+    platform: PaymentPlatform,
+    transactionId: string
+  ): Promise<Transaction> {
+    const service = getPlatformService(platform, {
+      id: platform,
+      name: platform,
+      platform,
+      settings: {
+        apiKey: process.env.VITE_PAYMENT_API_KEY || '',
+        secretKey: process.env.VITE_PAYMENT_SECRET_KEY || '',
+        webhookSecret: process.env.VITE_PAYMENT_WEBHOOK_SECRET,
+        sandbox: process.env.NODE_ENV !== 'production'
+      },
+      enabled: true
+    });
 
-    try {
-      return await service.getTransaction(transactionId);
-    } catch (error) {
-      logger.error(`Error getting transaction for platform ${platformId}:`, error);
-      throw error;
-    }
+    return service.getTransaction(transactionId);
   }
 
   public async getTransactions(
-    platformId: string,
+    platform: PaymentPlatform,
     startDate?: Date,
     endDate?: Date
   ): Promise<Transaction[]> {
-    const service = this.services.get(platformId);
-    if (!service) {
-      throw new Error(`Payment service not found for platform ${platformId}`);
-    }
+    const service = getPlatformService(platform, {
+      id: platform,
+      name: platform,
+      platform,
+      settings: {
+        apiKey: process.env.VITE_PAYMENT_API_KEY || '',
+        secretKey: process.env.VITE_PAYMENT_SECRET_KEY || '',
+        webhookSecret: process.env.VITE_PAYMENT_WEBHOOK_SECRET,
+        sandbox: process.env.NODE_ENV !== 'production'
+      },
+      enabled: true
+    });
 
-    try {
-      return await service.getTransactions(startDate, endDate);
-    } catch (error) {
-      logger.error(`Error getting transactions for platform ${platformId}:`, error);
-      throw error;
-    }
+    return service.getTransactions(startDate, endDate);
   }
 
   public async getStatus(platformId: string): Promise<TransactionStatus> {
@@ -170,20 +185,23 @@ export class PaymentService {
   }
 
   public async validateWebhookSignature(
-    platformId: string,
+    platform: PaymentPlatform,
     signature: string,
     payload: Record<string, any>
   ): Promise<boolean> {
-    const service = this.services.get(platformId);
-    if (!service) {
-      throw new Error(`Payment service not found for platform ${platformId}`);
-    }
+    const service = getPlatformService(platform, {
+      id: platform,
+      name: platform,
+      platform,
+      settings: {
+        apiKey: process.env.VITE_PAYMENT_API_KEY || '',
+        secretKey: process.env.VITE_PAYMENT_SECRET_KEY || '',
+        webhookSecret: process.env.VITE_PAYMENT_WEBHOOK_SECRET,
+        sandbox: process.env.NODE_ENV !== 'production'
+      },
+      enabled: true
+    });
 
-    try {
-      return await service.validateWebhookSignature(signature, payload);
-    } catch (error) {
-      logger.error(`Error validating webhook signature for platform ${platformId}:`, error);
-      return false;
-    }
+    return service.validateWebhookSignature(signature, payload);
   }
 } 

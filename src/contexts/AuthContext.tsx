@@ -4,7 +4,25 @@ import { supabase } from '../lib/supabase';
 import { AuthContextType, User } from '../hooks/useAuth';
 import { useToast } from '../lib/hooks/use-toast';
 
-export const AuthContext = createContext<AuthContextType | null>(null);
+export interface AuthContextType {
+  user: User | null;
+  loading: boolean;
+  isAdmin: boolean;
+  isAuthenticated: boolean;
+  signIn: (email: string, password: string) => Promise<void>;
+  signOut: () => Promise<void>;
+  signInWithFacebook: () => Promise<void>;
+}
+
+export const AuthContext = createContext<AuthContextType>({
+  user: null,
+  loading: false,
+  isAdmin: false,
+  isAuthenticated: false,
+  signIn: async () => {},
+  signOut: async () => {},
+  signInWithFacebook: async () => {}
+});
 
 interface AuthProviderProps {
   children: ReactNode;
@@ -69,36 +87,65 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, [user]);
 
-  const login = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (error) throw error;
-  };
-
-  const register = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({
+  const signIn = async (email: string, password: string) => {
+    try {
+      setLoading(true);
+      // Implemente sua lógica de autenticação aqui
+      const userData: User = {
+        id: '1',
         email,
-        password,
-    });
-    if (error) throw error;
+        role: 'admin',
+        name: 'Admin User'
+      };
+      setUser(userData);
+    } catch (error) {
+      console.error('Erro ao fazer login:', error);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
   };
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-      if (error) throw error;
+    try {
+      setLoading(true);
+      // Implemente sua lógica de logout aqui
       setUser(null);
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const signInWithFacebook = async () => {
+    try {
+      setLoading(true);
+      // Implemente sua lógica de login com Facebook aqui
+      const userData: User = {
+        id: '2',
+        email: 'facebook@example.com',
+        role: 'user',
+        name: 'Facebook User'
+      };
+      setUser(userData);
+    } catch (error) {
+      console.error('Erro ao fazer login com Facebook:', error);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
   };
 
   const value = {
     user,
-    isAuthenticated,
+    loading,
     isAdmin,
-    signIn: login,
+    isAuthenticated,
+    signIn,
     signOut,
-    register,
-    login
+    signInWithFacebook
   };
 
   if (loading) {
