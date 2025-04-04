@@ -86,8 +86,8 @@ export class MundPayService extends BasePlatformService {
     };
 
     return this.retryRequest(async () => {
-      try {
-        const response = await axios.post(
+    try {
+      const response = await axios.post(
           `${this.getBaseUrl()}/payments`,
           requestPayload,
           { headers: this.getHeaders(requestPayload) }
@@ -95,22 +95,22 @@ export class MundPayService extends BasePlatformService {
 
         logger.info(`Payment processed successfully: ${response.data.id}`);
 
-        return {
-          id: response.data.id,
-          platform_id: this.config.platform_id,
-          amount: response.data.amount,
-          currency: response.data.currency,
+      return {
+        id: response.data.id,
+        platform_id: this.config.platform_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
           status: this.mapMundPayStatus(response.data.status),
-          payment_method: response.data.payment_method,
+        payment_method: response.data.payment_method,
           metadata: response.data.metadata,
-          created_at: new Date(response.data.created_at),
+        created_at: new Date(response.data.created_at),
           updated_at: new Date(response.data.updated_at)
-        };
+      };
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
         logger.error(`Payment processing failed: ${errorMessage}`);
-        throw this.handleError(error);
-      }
+      throw this.handleError(error);
+    }
     });
   }
 
@@ -119,7 +119,7 @@ export class MundPayService extends BasePlatformService {
     amount?: number
   ): Promise<Transaction> {
     return this.retryRequest(async () => {
-      try {
+    try {
         const requestPayload = {
           transaction_id: transactionId,
           amount
@@ -158,26 +158,26 @@ export class MundPayService extends BasePlatformService {
         const response = await axios.post(
           `${this.getBaseUrl()}/transactions/${transactionId}/cancel`,
           {},
-          { headers: this.getHeaders() }
-        );
+        { headers: this.getHeaders() }
+      );
 
         logger.info(`Transaction cancelled successfully: ${response.data.id}`);
 
-        return {
-          id: response.data.id,
-          platform_id: this.config.platform_id,
-          amount: response.data.amount,
-          currency: response.data.currency,
+      return {
+        id: response.data.id,
+        platform_id: this.config.platform_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
           status: TransactionStatus.CANCELLED,
-          payment_method: response.data.payment_method,
+        payment_method: response.data.payment_method,
           metadata: response.data.metadata,
-          created_at: new Date(response.data.created_at),
+        created_at: new Date(response.data.created_at),
           updated_at: new Date(response.data.updated_at)
-        };
+      };
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
         logger.error(`Transaction cancellation failed: ${errorMessage}`);
-        throw this.handleError(error);
+      throw this.handleError(error);
       }
     });
   }
@@ -286,50 +286,50 @@ export class MundPayService extends BasePlatformService {
 
   async getTransaction(transactionId: string): Promise<Transaction> {
     return this.retryRequest(async () => {
-      try {
-        const response = await axios.get(
+    try {
+      const response = await axios.get(
           `${this.getBaseUrl()}/transactions/${transactionId}`,
-          { headers: this.getHeaders() }
-        );
+        { headers: this.getHeaders() }
+      );
 
         logger.info(`Transaction details retrieved successfully: ${response.data.id}`);
 
-        return {
-          id: response.data.id,
-          platform_id: this.config.platform_id,
-          amount: response.data.amount,
-          currency: response.data.currency,
+      return {
+        id: response.data.id,
+        platform_id: this.config.platform_id,
+        amount: response.data.amount,
+        currency: response.data.currency,
           status: this.mapMundPayStatus(response.data.status),
-          payment_method: response.data.payment_method,
+        payment_method: response.data.payment_method,
           metadata: response.data.metadata,
-          created_at: new Date(response.data.created_at),
+        created_at: new Date(response.data.created_at),
           updated_at: new Date(response.data.updated_at)
-        };
+      };
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
         logger.error(`Failed to retrieve transaction details: ${errorMessage}`);
-        throw this.handleError(error);
-      }
+      throw this.handleError(error);
+    }
     });
   }
 
   async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
     return this.retryRequest(async () => {
-      try {
-        const params: Record<string, any> = {};
-        if (startDate) params.start_date = startDate.toISOString();
-        if (endDate) params.end_date = endDate.toISOString();
+    try {
+      const params: Record<string, any> = {};
+      if (startDate) params.start_date = startDate.toISOString();
+      if (endDate) params.end_date = endDate.toISOString();
 
         const response = await axios.get(`${this.getBaseUrl()}/transactions`, {
-          headers: this.getHeaders(),
-          params
-        });
+        headers: this.getHeaders(),
+        params
+      });
 
         logger.info(`Retrieved ${response.data.transactions.length} transactions`);
 
         return response.data.transactions.map((transaction: any) => ({
           id: transaction.id,
-          platform_id: this.config.platform_id,
+        platform_id: this.config.platform_id,
           amount: transaction.amount,
           currency: transaction.currency,
           status: this.mapMundPayStatus(transaction.status),
@@ -341,8 +341,8 @@ export class MundPayService extends BasePlatformService {
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
         logger.error(`Failed to retrieve transactions list: ${errorMessage}`);
-        throw this.handleError(error);
-      }
+      throw this.handleError(error);
+    }
     });
   }
 } 

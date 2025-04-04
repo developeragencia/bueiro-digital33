@@ -1,152 +1,216 @@
-import { useState, useEffect } from 'react';
-import { toast } from 'react-hot-toast';
-import { PaymentPlatform, PlatformSettings } from '../../types/payment';
-import { paymentPlatformService } from '../../services/payment';
+import { useState, ChangeEvent } from 'react';
+import { PlatformConfig, PaymentPlatform } from '../../types/payment';
+import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
+import { Switch } from '../ui/switch';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
+import { Alert, AlertDescription, AlertTitle } from '../ui/alert';
+import { Loader2 } from 'lucide-react';
 
 interface PaymentPlatformSettingsProps {
   platform: PaymentPlatform;
-  onUpdate: () => void;
+  onSave: (config: PlatformConfig) => void;
+  onCancel: () => void;
 }
 
-export function PaymentPlatformSettings({ platform, onUpdate }: PaymentPlatformSettingsProps) {
-  const [isLoading, setIsLoading] = useState(false);
-  const [settings, setSettings] = useState<PlatformSettings>({
-    client_id: platform.client_id,
-    client_secret: platform.client_secret,
-    webhook_url: platform.webhook_url,
-    webhook_secret: platform.webhook_secret
+export function PaymentPlatformSettings({ platform, onSave, onCancel }: PaymentPlatformSettingsProps) {
+  const [settings, setSettings] = useState<PlatformConfig['settings']>({
+    id: '',
+    name: platform,
+    platform: platform,
+    logo: '',
+    description: '',
+    settings: {
+      webhook: {
+        url: '',
+        secret: ''
+      },
+      apiKey: '',
+      secretKey: '',
+      sandbox: true
+    }
   });
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setError(null);
 
     try {
-      await paymentPlatformService.update(platform.id, {
-        ...platform,
-        client_id: settings.client_id,
-        client_secret: settings.client_secret,
-        webhook_url: settings.webhook_url,
-        webhook_secret: settings.webhook_secret
-      });
+      const config: PlatformConfig = {
+        platform_id: settings.id,
+        platform_type: platform,
+        settings
+      };
 
-      toast.success('Configurações atualizadas com sucesso!');
-      onUpdate();
-    } catch (error) {
-      console.error('Erro ao atualizar configurações:', error);
-      toast.error('Erro ao atualizar configurações');
+      await onSave(config);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleToggle = async () => {
-    setIsLoading(true);
+  const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const { id, value } = e.target;
+    setSettings(prev => ({
+      ...prev,
+      [id]: value
+    }));
+  };
 
-    try {
-      await paymentPlatformService.update(platform.id, {
-        ...platform,
-        is_active: !platform.is_active
-      });
+  const handleSettingsChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const { id, value } = e.target;
+    setSettings(prev => ({
+      ...prev,
+      settings: {
+        ...prev.settings,
+        [id]: value
+      }
+    }));
+  };
 
-      toast.success(
-        platform.is_active
-          ? 'Plataforma desativada com sucesso!'
-          : 'Plataforma ativada com sucesso!'
-      );
-      onUpdate();
-    } catch (error) {
-      console.error('Erro ao alterar status da plataforma:', error);
-      toast.error('Erro ao alterar status da plataforma');
-    } finally {
-      setIsLoading(false);
-    }
+  const handleWebhookChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const { id, value } = e.target;
+    setSettings(prev => ({
+      ...prev,
+      settings: {
+        ...prev.settings,
+        webhook: {
+          ...prev.settings.webhook,
+          [id]: value
+        }
+      }
+    }));
   };
 
   return (
-    <div className="bg-white shadow rounded-lg p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h3 className="text-lg font-medium">{platform.name}</h3>
-        <button
-          onClick={handleToggle}
-          disabled={isLoading}
-          className={`px-4 py-2 rounded-md ${
-            platform.is_active
-              ? 'bg-red-500 hover:bg-red-600'
-              : 'bg-green-500 hover:bg-green-600'
-          } text-white`}
-        >
-          {platform.is_active ? 'Desativar' : 'Ativar'}
-        </button>
-      </div>
+    <Card>
+      <CardHeader>
+        <CardTitle>Configure {platform}</CardTitle>
+        <CardDescription>
+          Configure the settings for the {platform} payment platform
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && (
+            <Alert variant="destructive">
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Client ID
-          </label>
-          <input
-            type="text"
-            value={settings.client_id}
-            onChange={(e) =>
-              setSettings({ ...settings, client_id: e.target.value })
-            }
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-          />
-        </div>
+          <div className="space-y-2">
+            <Label htmlFor="id">Platform ID</Label>
+            <Input
+              id="id"
+              value={settings.id}
+              onChange={handleInputChange}
+              required
+            />
+          </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Client Secret
-          </label>
-          <input
-            type="password"
-            value={settings.client_secret}
-            onChange={(e) =>
-              setSettings({ ...settings, client_secret: e.target.value })
-            }
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-          />
-        </div>
+          <div className="space-y-2">
+            <Label htmlFor="name">Name</Label>
+            <Input
+              id="name"
+              value={settings.name}
+              onChange={handleInputChange}
+              required
+            />
+          </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Webhook URL
-          </label>
-          <input
-            type="text"
-            value={settings.webhook_url}
-            onChange={(e) =>
-              setSettings({ ...settings, webhook_url: e.target.value })
-            }
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-          />
-        </div>
+          <div className="space-y-2">
+            <Label htmlFor="logo">Logo URL</Label>
+            <Input
+              id="logo"
+              value={settings.logo}
+              onChange={handleInputChange}
+            />
+          </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Webhook Secret
-          </label>
-          <input
-            type="password"
-            value={settings.webhook_secret}
-            onChange={(e) =>
-              setSettings({ ...settings, webhook_secret: e.target.value })
-            }
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-          />
-        </div>
+          <div className="space-y-2">
+            <Label htmlFor="description">Description</Label>
+            <Input
+              id="description"
+              value={settings.description}
+              onChange={handleInputChange}
+            />
+          </div>
 
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            {isLoading ? 'Salvando...' : 'Salvar'}
-          </button>
-        </div>
-      </form>
-    </div>
+          <div className="space-y-2">
+            <Label htmlFor="url">Webhook URL</Label>
+            <Input
+              id="url"
+              value={settings.settings.webhook.url}
+              onChange={handleWebhookChange}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="secret">Webhook Secret</Label>
+            <Input
+              id="secret"
+              type="password"
+              value={settings.settings.webhook.secret}
+              onChange={handleWebhookChange}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="apiKey">API Key</Label>
+            <Input
+              id="apiKey"
+              type="password"
+              value={settings.settings.apiKey}
+              onChange={handleSettingsChange}
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="secretKey">Secret Key</Label>
+            <Input
+              id="secretKey"
+              type="password"
+              value={settings.settings.secretKey}
+              onChange={handleSettingsChange}
+              required
+            />
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <Switch
+              id="sandbox"
+              checked={settings.settings.sandbox}
+              onCheckedChange={(checked) =>
+                setSettings(prev => ({
+                  ...prev,
+                  settings: {
+                    ...prev.settings,
+                    sandbox: checked
+                  }
+                }))
+              }
+            />
+            <Label htmlFor="sandbox">Sandbox Mode</Label>
+          </div>
+
+          <div className="flex justify-end space-x-2">
+            <Button variant="outline" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={isLoading}>
+              {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
   );
 } 

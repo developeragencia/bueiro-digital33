@@ -1,23 +1,23 @@
 import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
 import { BasePlatformService } from './BasePlatformService';
-import axios, { AxiosError } from 'axios';
-import crypto from 'crypto';
 import { logger } from '../../../utils/logger';
-import { WebhookPayload } from '../../../types/payment';
+import crypto from 'crypto';
 
-const MAX_RETRIES = 3;
-const RETRY_DELAY = 1000; // 1 segundo
 const STATUS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-export class WooCommerceService extends BasePlatformService {
-  protected readonly SANDBOX_API_URL = 'https://sandbox.woocommerce.com/api/v1';
-  protected readonly PRODUCTION_API_URL = 'https://api.woocommerce.com/v1';
-  private statusCache: { data: PlatformStatusData | null; timestamp: number } = { data: null, timestamp: 0 };
+export class VindiService extends BasePlatformService {
+  private statusCache: {
+    data: PlatformStatusData | null;
+    timestamp: number;
+  } = {
+    data: null,
+    timestamp: 0
+  };
 
   constructor(config: PlatformConfig) {
     super(config);
     if (!config.settings.apiKey || !config.settings.secretKey) {
-      throw new Error('API key and secret key are required for WooCommerce service');
+      throw new Error('API key and secret key are required for Vindi service');
     }
   }
 
@@ -29,7 +29,7 @@ export class WooCommerceService extends BasePlatformService {
     return {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${this.config.settings.apiKey}`,
-      'X-Woo-Signature': this.generateSignature()
+      'X-Vindi-Signature': this.generateSignature()
     };
   }
 
@@ -46,35 +46,6 @@ export class WooCommerceService extends BasePlatformService {
     return statusMap[status.toLowerCase()] || TransactionStatus.UNKNOWN;
   }
 
-  private async retryRequest<T>(
-    requestFn: () => Promise<T>,
-    retries = MAX_RETRIES
-  ): Promise<T> {
-    try {
-      return await requestFn();
-    } catch (error) {
-      if (retries > 0 && this.isRetryableError(error)) {
-        logger.warn(`Retrying request, attempts left: ${retries}`);
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
-        return this.retryRequest(requestFn, retries - 1);
-      }
-      throw error;
-    }
-  }
-
-  private isRetryableError(error: unknown): boolean {
-    if (error instanceof AxiosError) {
-      const statusCode = error.response?.status;
-      return (
-        error.code === 'ECONNABORTED' ||
-        error.code === 'ECONNRESET' ||
-        error.code === 'ETIMEDOUT' ||
-        (statusCode !== undefined && statusCode >= 500)
-      );
-    }
-    return false;
-  }
-
   public async processPayment(
     amount: number,
     currency: Currency,
@@ -82,8 +53,8 @@ export class WooCommerceService extends BasePlatformService {
     paymentData: Record<string, any>
   ): Promise<Transaction> {
     try {
-      const response = await this.makeRequest<Record<string, any>>('POST', '/orders', {
-        order: {
+      const response = await this.makeRequest<Record<string, any>>('POST', '/bills', {
+        bill: {
           amount,
           currency,
           customer: paymentData.customer,
@@ -95,17 +66,17 @@ export class WooCommerceService extends BasePlatformService {
       return this.saveTransaction({
         user_id: paymentData.user_id,
         platform_id: this.config.platform_id,
-        platform_type: 'woocommerce',
+        platform_type: 'vindi',
         platform_settings: this.config.settings,
-        order_id: response.order.id,
+        order_id: response.bill.id,
         amount,
         currency,
-        status: this.mapStatus(response.order.status),
+        status: this.mapStatus(response.bill.status),
         customer: paymentData.customer,
         payment_method: paymentMethod,
         metadata: {
-          ...response.order,
-          woo_order_id: response.order.id
+          ...response.bill,
+          vindi_bill_id: response.bill.id
         }
       });
     } catch (error) {
@@ -121,7 +92,7 @@ export class WooCommerceService extends BasePlatformService {
   ): Promise<Transaction> {
     try {
       const transaction = await this.getTransaction(transactionId);
-      const response = await this.makeRequest<Record<string, any>>('POST', `/orders/${transaction.order_id}/refunds`, {
+      const response = await this.makeRequest<Record<string, any>>('POST', `/bills/${transaction.order_id}/refunds`, {
         refund: {
           amount,
           reason,
@@ -136,7 +107,7 @@ export class WooCommerceService extends BasePlatformService {
           refund_amount: amount,
           refund_reason: reason,
           refund_date: new Date(),
-          woo_refund_id: response.refund.id
+          vindi_refund_id: response.refund.id
         }
       });
     } catch (error) {
@@ -147,30 +118,30 @@ export class WooCommerceService extends BasePlatformService {
 
   public async getTransaction(transactionId: string): Promise<Transaction> {
     try {
-      const response = await this.makeRequest<Record<string, any>>('GET', `/orders/${transactionId}`);
+      const response = await this.makeRequest<Record<string, any>>('GET', `/bills/${transactionId}`);
       return {
         id: transactionId,
-        user_id: response.order.customer.id,
+        user_id: response.bill.customer.id,
         platform_id: this.config.platform_id,
-        platform_type: 'woocommerce',
+        platform_type: 'vindi',
         platform_settings: this.config.settings,
-        order_id: response.order.id,
-        amount: response.order.total,
-        currency: response.order.currency as Currency,
-        status: this.mapStatus(response.order.status),
+        order_id: response.bill.id,
+        amount: response.bill.amount,
+        currency: response.bill.currency as Currency,
+        status: this.mapStatus(response.bill.status),
         customer: {
-          name: response.order.customer.name,
-          email: response.order.customer.email,
-          document: response.order.customer.tax_number,
-          phone: response.order.customer.phone
+          name: response.bill.customer.name,
+          email: response.bill.customer.email,
+          document: response.bill.customer.document,
+          phone: response.bill.customer.phone
         },
-        payment_method: response.order.payment_method as PaymentMethod,
+        payment_method: response.bill.payment_method as PaymentMethod,
         metadata: {
-          ...response.order,
-          woo_order_id: response.order.id
+          ...response.bill,
+          vindi_bill_id: response.bill.id
         },
-        created_at: new Date(response.order.date_created),
-        updated_at: new Date(response.order.date_modified)
+        created_at: new Date(response.bill.created_at),
+        updated_at: new Date(response.bill.updated_at)
       };
     } catch (error) {
       logger.error('Error getting transaction:', error);
@@ -180,34 +151,34 @@ export class WooCommerceService extends BasePlatformService {
 
   public async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
     try {
-      const response = await this.makeRequest<Record<string, any>[]>('GET', '/orders', undefined, {
-        after: startDate?.toISOString(),
-        before: endDate?.toISOString()
+      const response = await this.makeRequest<Record<string, any>[]>('GET', '/bills', undefined, {
+        start_date: startDate?.toISOString(),
+        end_date: endDate?.toISOString()
       });
 
-      return response.map(order => ({
-        id: order.id,
-        user_id: order.customer.id,
+      return response.map(bill => ({
+        id: bill.id,
+        user_id: bill.customer.id,
         platform_id: this.config.platform_id,
-        platform_type: 'woocommerce',
+        platform_type: 'vindi',
         platform_settings: this.config.settings,
-        order_id: order.id,
-        amount: order.total,
-        currency: order.currency as Currency,
-        status: this.mapStatus(order.status),
+        order_id: bill.id,
+        amount: bill.amount,
+        currency: bill.currency as Currency,
+        status: this.mapStatus(bill.status),
         customer: {
-          name: order.customer.name,
-          email: order.customer.email,
-          document: order.customer.tax_number,
-          phone: order.customer.phone
+          name: bill.customer.name,
+          email: bill.customer.email,
+          document: bill.customer.document,
+          phone: bill.customer.phone
         },
-        payment_method: order.payment_method as PaymentMethod,
+        payment_method: bill.payment_method as PaymentMethod,
         metadata: {
-          ...order,
-          woo_order_id: order.id
+          ...bill,
+          vindi_bill_id: bill.id
         },
-        created_at: new Date(order.date_created),
-        updated_at: new Date(order.date_modified)
+        created_at: new Date(bill.created_at),
+        updated_at: new Date(bill.updated_at)
       }));
     } catch (error) {
       logger.error('Error getting transactions:', error);
@@ -222,7 +193,7 @@ export class WooCommerceService extends BasePlatformService {
     }
 
     try {
-      const response = await this.makeRequest<Record<string, any>>('GET', '/system_status');
+      const response = await this.makeRequest<Record<string, any>>('GET', '/status');
       
       const status: PlatformStatusData = {
         is_active: response.is_active,
@@ -245,12 +216,12 @@ export class WooCommerceService extends BasePlatformService {
 
   public async cancelTransaction(transactionId: string): Promise<Transaction> {
     try {
-      const response = await this.makeRequest<Record<string, any>>('POST', `/orders/${transactionId}/cancel`);
+      const response = await this.makeRequest<Record<string, any>>('POST', `/bills/${transactionId}/cancel`);
       
       return this.updateTransaction(transactionId, {
         status: TransactionStatus.CANCELLED,
         metadata: {
-          ...response.order,
+          ...response.bill,
           cancelled_at: new Date()
         }
       });

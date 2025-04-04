@@ -95,7 +95,7 @@ export class YapayService extends BasePlatformService {
     payload: Record<string, any>
   ): Promise<boolean> {
     const calculatedSignature = this.generateSignature(payload);
-    return calculatedSignature === signature;
+      return calculatedSignature === signature;
   }
 
   async getTransaction(transactionId: string): Promise<Transaction> {

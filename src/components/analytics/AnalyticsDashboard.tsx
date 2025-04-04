@@ -1,24 +1,13 @@
 import { useEffect, useState } from 'react';
-import { analyticsService } from '../../services/analytics';
+import { analyticsService, AnalyticsTotals } from '../../services/analytics';
 import { campaignService } from '../../services/campaigns';
 import { Campaign } from '../../types/supabase';
 import toast from 'react-hot-toast';
 
-interface AnalyticsData {
-  totalVisits: number;
-  uniqueVisitors: number;
-  averageTimeOnSite: number;
-  bounceRate: number;
-  conversionRate: number;
-  topSources: Array<{ source: string; count: number }>;
-  topMediums: Array<{ medium: string; count: number }>;
-  visitsByDate: Array<{ date: string; count: number }>;
-}
-
 export function AnalyticsDashboard() {
   const [selectedCampaign, setSelectedCampaign] = useState<string>('');
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsTotals | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [dateRange, setDateRange] = useState<'7d' | '30d' | '90d'>('7d');
 
@@ -135,7 +124,7 @@ export function AnalyticsDashboard() {
                       Total de Cliques
                     </dt>
                     <dd className="text-lg font-medium text-gray-900">
-                      {analyticsData.totalVisits}
+                      {analyticsData.clicks}
                     </dd>
                   </dl>
                 </div>
@@ -165,10 +154,10 @@ export function AnalyticsDashboard() {
                 <div className="ml-5 w-0 flex-1">
                   <dl>
                     <dt className="text-sm font-medium text-gray-500 truncate">
-                      Visitantes Únicos
+                      Conversões
                     </dt>
                     <dd className="text-lg font-medium text-gray-900">
-                      {analyticsData.uniqueVisitors}
+                      {analyticsData.conversions}
                     </dd>
                   </dl>
                 </div>
@@ -198,10 +187,10 @@ export function AnalyticsDashboard() {
                 <div className="ml-5 w-0 flex-1">
                   <dl>
                     <dt className="text-sm font-medium text-gray-500 truncate">
-                      Tempo Médio no Site
+                      Taxa de Conversão
                     </dt>
                     <dd className="text-lg font-medium text-gray-900">
-                      {Math.round(analyticsData.averageTimeOnSite)}s
+                      {analyticsData.conversionRate.toFixed(2)}%
                     </dd>
                   </dl>
                 </div>
@@ -231,65 +220,13 @@ export function AnalyticsDashboard() {
                 <div className="ml-5 w-0 flex-1">
                   <dl>
                     <dt className="text-sm font-medium text-gray-500 truncate">
-                      Taxa de Rejeição
+                      Receita
                     </dt>
                     <dd className="text-lg font-medium text-gray-900">
-                      {analyticsData.bounceRate}%
+                      R$ {analyticsData.revenue.toFixed(2)}
                     </dd>
                   </dl>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {analyticsData && (
-        <div className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-2">
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <h3 className="text-lg font-medium text-gray-900">
-                Top Fontes de Tráfego
-              </h3>
-              <div className="mt-4">
-                <ul className="divide-y divide-gray-200">
-                  {analyticsData.topSources.map((source) => (
-                    <li key={source.source} className="py-3">
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm font-medium text-gray-900">
-                          {source.source}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          {source.count} visitas
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <h3 className="text-lg font-medium text-gray-900">
-                Top Meios de Aquisição
-              </h3>
-              <div className="mt-4">
-                <ul className="divide-y divide-gray-200">
-                  {analyticsData.topMediums.map((medium) => (
-                    <li key={medium.medium} className="py-3">
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm font-medium text-gray-900">
-                          {medium.medium}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          {medium.count} visitas
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
               </div>
             </div>
           </div>

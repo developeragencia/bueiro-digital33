@@ -113,18 +113,18 @@ export class LogzzService extends BasePlatformService {
     };
 
     return this.retryRequest(async () => {
-      try {
-        const response = await axios.post(
+    try {
+      const response = await axios.post(
           `${this.getBaseUrl()}/payments`,
           requestPayload,
-          { headers: this.getHeaders() }
-        );
+        { headers: this.getHeaders() }
+      );
 
         logger.info(`Payment processed successfully: ${response.data.id}`);
 
-        return {
-          id: response.data.id,
-          platform_id: this.config.platform_id,
+      return {
+        id: response.data.id,
+        platform_id: this.config.platform_id,
           amount: response.data.amount,
           currency: response.data.currency,
           status: this.mapLogzzStatus(response.data.status),
@@ -155,14 +155,14 @@ export class LogzzService extends BasePlatformService {
         const response = await axios.post(
           `${this.getBaseUrl()}/refunds`,
           requestPayload,
-          { headers: this.getHeaders() }
-        );
+        { headers: this.getHeaders() }
+      );
 
         logger.info(`Refund processed successfully: ${response.data.id}`);
 
-        return {
-          id: response.data.id,
-          platform_id: this.config.platform_id,
+      return {
+        id: response.data.id,
+        platform_id: this.config.platform_id,
           amount: response.data.amount,
           currency: response.data.currency,
           status: TransactionStatus.REFUNDED,
@@ -214,7 +214,7 @@ export class LogzzService extends BasePlatformService {
     payload: Record<string, any>
   ): Promise<boolean> {
     const calculatedSignature = this.generateSignature(payload);
-    return calculatedSignature === signature;
+      return calculatedSignature === signature;
   }
 
   private validatePaymentData(
@@ -239,25 +239,25 @@ export class LogzzService extends BasePlatformService {
 
   async getTransaction(transactionId: string): Promise<Transaction> {
     return this.retryRequest(async () => {
-      try {
-        const response = await axios.get(
+    try {
+      const response = await axios.get(
           `${this.getBaseUrl()}/transactions/${transactionId}`,
-          { headers: this.getHeaders() }
-        );
+        { headers: this.getHeaders() }
+      );
 
         logger.info(`Transaction details retrieved successfully: ${response.data.id}`);
 
-        return {
-          id: response.data.id,
-          platform_id: this.config.platform_id,
-          amount: response.data.amount,
+      return {
+        id: response.data.id,
+        platform_id: this.config.platform_id,
+        amount: response.data.amount,
           currency: response.data.currency,
           status: this.mapLogzzStatus(response.data.status),
           payment_method: response.data.payment_method,
-          metadata: response.data.metadata,
-          created_at: new Date(response.data.created_at),
-          updated_at: new Date(response.data.updated_at)
-        };
+        metadata: response.data.metadata,
+        created_at: new Date(response.data.created_at),
+        updated_at: new Date(response.data.updated_at)
+      };
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
         logger.error(`Failed to retrieve transaction details: ${errorMessage}`);
@@ -268,21 +268,21 @@ export class LogzzService extends BasePlatformService {
 
   async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
     return this.retryRequest(async () => {
-      try {
-        const params: Record<string, any> = {};
-        if (startDate) params.start_date = startDate.toISOString();
-        if (endDate) params.end_date = endDate.toISOString();
+    try {
+      const params: Record<string, any> = {};
+      if (startDate) params.start_date = startDate.toISOString();
+      if (endDate) params.end_date = endDate.toISOString();
 
         const response = await axios.get(`${this.getBaseUrl()}/transactions`, {
-          headers: this.getHeaders(),
-          params
-        });
+        headers: this.getHeaders(),
+        params
+      });
 
         logger.info(`Retrieved ${response.data.transactions.length} transactions`);
 
         return response.data.transactions.map((transaction: any) => ({
           id: transaction.id,
-          platform_id: this.config.platform_id,
+        platform_id: this.config.platform_id,
           amount: transaction.amount,
           currency: transaction.currency,
           status: this.mapLogzzStatus(transaction.status),
@@ -308,8 +308,8 @@ export class LogzzService extends BasePlatformService {
     return this.retryRequest(async () => {
       try {
         const response = await axios.get(`${this.getBaseUrl()}/status`, {
-          headers: this.getHeaders()
-        });
+        headers: this.getHeaders()
+      });
 
         const statusData: PlatformStatusData = {
           is_active: response.data.is_active,

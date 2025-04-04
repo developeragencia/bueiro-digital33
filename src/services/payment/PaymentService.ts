@@ -1,123 +1,189 @@
-import { PaymentPlatform, PaymentPlatformType, PlatformConfig, Transaction, TransactionStatus, PlatformStatusData } from '../../types/payment';
-import { getPlatformService } from './platforms';
-import { TransactionService } from './TransactionService';
-import { WebhookService } from './WebhookService';
-import { StatusService } from './StatusService';
-import { PaymentPlatformService } from './PaymentPlatformService';
+import { PlatformConfig, Transaction, TransactionStatus, Currency, PaymentMethod } from '../../types/payment';
+import { BasePlatformService } from './platforms/BasePlatformService';
+import { PagarMeService } from './platforms/PagarMeService';
+import { MercadoPagoService } from './platforms/MercadoPagoService';
+import { ShopifyService } from './platforms/ShopifyService';
+import { WooCommerceService } from './platforms/WooCommerceService';
+import { VindiService } from './platforms/VindiService';
+import { TrayService } from './platforms/TrayService';
+import { PepperService } from './platforms/PepperService';
+import { FRCService } from './platforms/FRCService';
+import { DoppusService } from './platforms/DoppusService';
+import { FortPayService } from './platforms/FortPayService';
+import { HublaService } from './platforms/HublaService';
+import { TictoService } from './platforms/TictoService';
+import { KiwifyService } from './platforms/KiwifyService';
+import { logger } from '../../utils/logger';
 
 export class PaymentService {
-  private platformService: PaymentPlatformService;
-  private statusService: StatusService;
-  private transactionService: TransactionService;
-  private webhookService: WebhookService;
+  private services: Map<string, BasePlatformService> = new Map();
 
-  constructor() {
-    this.platformService = new PaymentPlatformService();
-    this.statusService = new StatusService();
-    this.transactionService = new TransactionService();
-    this.webhookService = new WebhookService(this.platformService, this.transactionService);
+  constructor(configs: PlatformConfig[]) {
+    this.initializeServices(configs);
   }
 
-  async getAvailablePlatforms(): Promise<PaymentPlatform[]> {
-    return this.platformService.getAvailablePlatforms();
-  }
-
-  async getPlatformById(platformId: string): Promise<PaymentPlatform | null> {
-    return this.platformService.getById(platformId);
-  }
-
-  async getPlatformsByUserId(userId: string): Promise<PaymentPlatform[]> {
-    return this.platformService.getByUserId(userId);
-  }
-
-  async integratePlatform(platform: PaymentPlatformType, config: PlatformConfig, userId: string): Promise<PaymentPlatform> {
-    return this.platformService.integrate(platform, config, userId);
-  }
-
-  async updatePlatformConfig(platform: PaymentPlatform, config: PlatformConfig): Promise<PaymentPlatform> {
-    return this.platformService.updateConfig(platform, config);
-  }
-
-  async deletePlatform(platformId: string): Promise<void> {
-    return this.platformService.delete(platformId);
-  }
-
-  async processPayment(platform: PaymentPlatform, data: Record<string, any>): Promise<Transaction> {
-    const transaction = await this.platformService.processPayment(platform, data);
-    await this.transactionService.create(transaction);
-    await this.statusService.updateMetrics(platform.id, { 
-      success_rate: 1,
-      created_at: new Date(),
-      updated_at: new Date()
+  private initializeServices(configs: PlatformConfig[]): void {
+    configs.forEach(config => {
+      try {
+        const service = this.createService(config);
+        if (service) {
+          this.services.set(config.platform_id, service);
+        }
+      } catch (error) {
+        logger.error(`Failed to initialize service for platform ${config.platform_id}:`, error);
+      }
     });
-    return transaction;
   }
 
-  async processRefund(platform: PaymentPlatform, transactionId: string, amount?: number, reason?: string): Promise<Transaction> {
-    const transaction = await this.platformService.processRefund(platform, transactionId, amount, reason);
-    await this.transactionService.update(transaction.id, { status: transaction.status });
-    return transaction;
+  private createService(config: PlatformConfig): BasePlatformService | null {
+    switch (config.platform_type) {
+      case 'pagarme':
+        return new PagarMeService(config);
+      case 'mercadopago':
+        return new MercadoPagoService(config);
+      case 'shopify':
+        return new ShopifyService(config);
+      case 'woocommerce':
+        return new WooCommerceService(config);
+      case 'vindi':
+        return new VindiService(config);
+      case 'tray':
+        return new TrayService(config);
+      case 'pepper':
+        return new PepperService(config);
+      case 'frc':
+        return new FRCService(config);
+      case 'doppus':
+        return new DoppusService(config);
+      case 'fortpay':
+        return new FortPayService(config);
+      case 'hubla':
+        return new HublaService(config);
+      case 'ticto':
+        return new TictoService(config);
+      case 'kiwify':
+        return new KiwifyService(config);
+      default:
+        logger.warn(`Unsupported platform type: ${config.platform_type}`);
+        return null;
+    }
   }
 
-  async validateWebhook(platform: PaymentPlatform, payload: Record<string, any>, signature: string): Promise<boolean> {
-    return this.platformService.validateWebhook(platform, payload, signature);
+  public async processPayment(
+    platformId: string,
+    amount: number,
+    currency: Currency,
+    paymentMethod: PaymentMethod,
+    paymentData: Record<string, any>
+  ): Promise<Transaction> {
+    const service = this.services.get(platformId);
+    if (!service) {
+      throw new Error(`Payment service not found for platform ${platformId}`);
+    }
+
+    try {
+      return await service.processPayment(amount, currency, paymentMethod, paymentData);
+    } catch (error) {
+      logger.error(`Error processing payment for platform ${platformId}:`, error);
+      throw error;
+    }
   }
 
-  async getTransaction(platform: PaymentPlatform, transactionId: string): Promise<Transaction> {
-    return this.platformService.getTransaction(platform, transactionId);
+  public async refundTransaction(
+    platformId: string,
+    transactionId: string,
+    amount?: number,
+    reason?: string
+  ): Promise<Transaction> {
+    const service = this.services.get(platformId);
+    if (!service) {
+      throw new Error(`Payment service not found for platform ${platformId}`);
+    }
+
+    try {
+      return await service.refundTransaction(transactionId, amount, reason);
+    } catch (error) {
+      logger.error(`Error refunding transaction for platform ${platformId}:`, error);
+      throw error;
+    }
   }
 
-  async getTransactions(platform: PaymentPlatform, startDate?: Date, endDate?: Date): Promise<Transaction[]> {
-    return this.platformService.getTransactions(platform, startDate, endDate);
+  public async getTransaction(platformId: string, transactionId: string): Promise<Transaction> {
+    const service = this.services.get(platformId);
+    if (!service) {
+      throw new Error(`Payment service not found for platform ${platformId}`);
+    }
+
+    try {
+      return await service.getTransaction(transactionId);
+    } catch (error) {
+      logger.error(`Error getting transaction for platform ${platformId}:`, error);
+      throw error;
+    }
   }
 
-  async getPlatformStatus(platform: PaymentPlatform): Promise<PlatformStatusData> {
-    return this.platformService.getStatus(platform);
+  public async getTransactions(
+    platformId: string,
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<Transaction[]> {
+    const service = this.services.get(platformId);
+    if (!service) {
+      throw new Error(`Payment service not found for platform ${platformId}`);
+    }
+
+    try {
+      return await service.getTransactions(startDate, endDate);
+    } catch (error) {
+      logger.error(`Error getting transactions for platform ${platformId}:`, error);
+      throw error;
+    }
   }
 
-  async getTransactionById(transactionId: string): Promise<Transaction | null> {
-    return this.transactionService.getById(transactionId);
+  public async getStatus(platformId: string): Promise<TransactionStatus> {
+    const service = this.services.get(platformId);
+    if (!service) {
+      throw new Error(`Payment service not found for platform ${platformId}`);
+    }
+
+    try {
+      const status = await service.getStatus();
+      return status.status;
+    } catch (error) {
+      logger.error(`Error getting status for platform ${platformId}:`, error);
+      throw error;
+    }
   }
 
-  async getTransactionByOrderId(orderId: string): Promise<Transaction | null> {
-    return this.transactionService.getByOrderId(orderId);
+  public async cancelTransaction(platformId: string, transactionId: string): Promise<Transaction> {
+    const service = this.services.get(platformId);
+    if (!service) {
+      throw new Error(`Payment service not found for platform ${platformId}`);
+    }
+
+    try {
+      return await service.cancelTransaction(transactionId);
+    } catch (error) {
+      logger.error(`Error cancelling transaction for platform ${platformId}:`, error);
+      throw error;
+    }
   }
 
-  async getTransactionsByPlatformId(platformId: string): Promise<Transaction[]> {
-    return this.transactionService.getByPlatformId(platformId);
-  }
+  public async validateWebhookSignature(
+    platformId: string,
+    signature: string,
+    payload: Record<string, any>
+  ): Promise<boolean> {
+    const service = this.services.get(platformId);
+    if (!service) {
+      throw new Error(`Payment service not found for platform ${platformId}`);
+    }
 
-  async getTransactionsByUserId(userId: string): Promise<Transaction[]> {
-    return this.transactionService.getByUserId(userId);
+    try {
+      return await service.validateWebhookSignature(signature, payload);
+    } catch (error) {
+      logger.error(`Error validating webhook signature for platform ${platformId}:`, error);
+      return false;
+    }
   }
-
-  async getTransactionsByStatus(status: TransactionStatus): Promise<Transaction[]> {
-    return this.transactionService.getByStatus(status);
-  }
-
-  async getTransactionsByDateRange(startDate: Date, endDate: Date): Promise<Transaction[]> {
-    return this.transactionService.getByDateRange(startDate.toISOString(), endDate.toISOString());
-  }
-
-  async updateTransactionStatus(transactionId: string, status: TransactionStatus): Promise<Transaction> {
-    return this.transactionService.updateStatus(transactionId, status);
-  }
-
-  async deleteTransaction(transactionId: string): Promise<void> {
-    return this.transactionService.delete(transactionId);
-  }
-
-  async monitorPlatform(platformId: string): Promise<void> {
-    return this.statusService.monitorPlatform(platformId);
-  }
-
-  async checkPlatformHealth(platformId: string): Promise<boolean> {
-    return this.statusService.checkHealth(platformId);
-  }
-
-  async listTransactions(filters?: Partial<Transaction>): Promise<Transaction[]> {
-    return this.transactionService.list(filters);
-  }
-}
-
-export const paymentService = new PaymentService(); 
+} 

@@ -10,7 +10,7 @@ interface PlatformError extends Error {
 }
 
 type TransactionFilters = {
-  status?: Transaction['status'];
+  status?: TransactionStatus;
   startDate?: Date;
   endDate?: Date;
   orderId?: string;
@@ -90,15 +90,21 @@ export abstract class BasePlatformService {
 
   protected async saveTransaction(transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>): Promise<Transaction> {
     try {
-      // Aqui você implementaria a lógica para salvar a transação no banco de dados
-      // Por enquanto, vamos apenas retornar um objeto mockado
-      return {
-        ...transaction,
-        id: Math.random().toString(36).substring(7),
-        created_at: new Date(),
-        updated_at: new Date()
-      };
-    } catch (error: unknown) {
+      const { data, error } = await supabase
+        .from('transactions')
+        .insert({
+          ...transaction,
+          created_at: new Date(),
+          updated_at: new Date()
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (!data) throw new Error('Failed to save transaction');
+
+      return data;
+    } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       logger.error(`Failed to save transaction: ${errorMessage}`);
       throw this.handleError(error);
@@ -214,4 +220,4 @@ export abstract class BasePlatformService {
   protected async getTransactionsByPlatformId(): Promise<Transaction[]> {
     return this.listTransactions({ platformId: this.config.platform_id });
   }
-}
+} 

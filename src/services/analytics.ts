@@ -59,9 +59,9 @@ class AnalyticsServiceClass {
       ? totals.revenue / totals.conversions
       : 0;
 
-    return {
+      return {
       ...totals,
-      conversionRate,
+        conversionRate,
       averageOrderValue
     };
   }
@@ -158,7 +158,7 @@ class AnalyticsServiceClass {
     if (!campaigns || campaigns.length === 0) {
       return {
         clicks: 0,
-        conversions: 0,
+            conversions: 0,
         revenue: 0,
         conversionRate: 0,
         averageOrderValue: 0,

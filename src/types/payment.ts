@@ -111,7 +111,7 @@ export interface PlatformConfig {
   platform_type: string;
   settings: {
     apiKey?: string;
-    secretKey?: string;
+  secretKey?: string;
     sandbox?: boolean;
     webhookSecret?: string;
     [key: string]: any;

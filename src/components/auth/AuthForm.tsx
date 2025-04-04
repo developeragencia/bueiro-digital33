@@ -27,7 +27,7 @@ export function AuthForm({ type }: AuthFormProps) {
         toast.success('Login realizado com sucesso!');
         navigate('/dashboard');
       } else {
-        await register(email, password);
+        await register(email, password, name);
         toast.success('Cadastro realizado com sucesso!');
         navigate('/login');
       }

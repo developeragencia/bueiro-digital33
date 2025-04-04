@@ -1,37 +1,52 @@
-import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, PaymentMethod } from '../../../types/payment';
+import { PlatformConfig, Transaction, PlatformStatusData, TransactionStatus, Currency, Customer, PaymentMethod } from '../../../types/payment';
 import { BasePlatformService } from './BasePlatformService';
-import axios from 'axios';
+import { logger } from '../../../utils/logger';
 import crypto from 'crypto';
+
+const STATUS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 export class ShopifyService extends BasePlatformService {
   protected readonly SANDBOX_API_URL = 'https://sandbox.shopify.com/admin/api/2024-01';
   protected readonly PRODUCTION_API_URL = 'https://shopify.com/admin/api/2024-01';
 
+  private statusCache: {
+    data: PlatformStatusData | null;
+    timestamp: number;
+  } = {
+    data: null,
+    timestamp: 0
+  };
+
   constructor(config: PlatformConfig) {
     super(config);
+    if (!config.settings.apiKey || !config.settings.secretKey) {
+      throw new Error('API key and secret key are required for Shopify service');
+    }
   }
 
-  public getBaseUrl(): string {
-    return this.config.settings?.sandbox ? this.SANDBOX_API_URL : this.PRODUCTION_API_URL;
+  protected getBaseUrl(): string {
+    return this.config.settings.sandbox ? this.SANDBOX_API_URL : this.PRODUCTION_API_URL;
   }
 
-  public getHeaders(): Record<string, string> {
+  protected getHeaders(): Record<string, string> {
+    if (!this.config.settings.apiKey) {
+      throw new Error('API key is required for Shopify service');
+    }
     return {
       'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': this.config.settings?.apiKey || '',
-      'X-Shopify-Shop-Domain': this.config.settings?.name || ''
+      'X-Shopify-Access-Token': this.config.settings.apiKey,
+      'X-Shopify-Hmac-Sha256': this.generateSignature()
     };
   }
 
-  private mapShopifyStatus(status: string): TransactionStatus {
+  protected mapStatus(status: string): TransactionStatus {
     const statusMap: Record<string, TransactionStatus> = {
-      paid: TransactionStatus.COMPLETED,
-      pending: TransactionStatus.PENDING,
-      failed: TransactionStatus.FAILED,
-      refunded: TransactionStatus.REFUNDED,
-      cancelled: TransactionStatus.CANCELLED,
-      inactive: TransactionStatus.INACTIVE,
-      error: TransactionStatus.ERROR
+      'pending': TransactionStatus.PENDING,
+      'processing': TransactionStatus.PROCESSING,
+      'completed': TransactionStatus.COMPLETED,
+      'failed': TransactionStatus.FAILED,
+      'refunded': TransactionStatus.REFUNDED,
+      'cancelled': TransactionStatus.CANCELLED
     };
 
     return statusMap[status.toLowerCase()] || TransactionStatus.UNKNOWN;
@@ -44,165 +59,209 @@ export class ShopifyService extends BasePlatformService {
     paymentData: Record<string, any>
   ): Promise<Transaction> {
     try {
-      const response = await axios.post(
-        `${this.getBaseUrl()}/payments`,
-        {
-          amount,
+      const response = await this.makeRequest<Record<string, any>>('POST', '/orders', {
+        order: {
+          total_price: amount,
           currency,
           payment_method: paymentMethod,
           ...paymentData
-        },
-        { headers: this.getHeaders() }
-      );
+        }
+      });
 
-      return {
-        id: response.data.id,
+      return this.saveTransaction({
+        user_id: paymentData.user_id,
+        platform_id: this.config.platform_id,
+        platform_type: 'shopify',
+        platform_settings: this.config.settings,
+        order_id: response.order.id,
         amount,
         currency,
-        status: this.mapShopifyStatus(response.data.status),
-        created_at: new Date(response.data.created_at),
-        updated_at: new Date(response.data.updated_at),
-        platform_id: this.config.platform_id,
-        metadata: response.data.metadata,
-        payment_method: paymentMethod
-      };
+        status: this.mapStatus(response.order.financial_status),
+        customer: {
+          name: response.order.customer.name,
+          email: response.order.customer.email,
+          document: response.order.customer.tax_number,
+          phone: response.order.customer.phone
+        },
+        payment_method: paymentMethod,
+        metadata: {
+          ...response.order,
+          shopify_order_id: response.order.id
+        }
+      });
     } catch (error) {
-      throw this.handleError(error);
+      logger.error('Error processing payment:', error);
+      throw this.createError('Failed to process payment', error);
     }
   }
 
-  public async refundTransaction(transactionId: string, amount?: number): Promise<Transaction> {
+  public async refundTransaction(
+    transactionId: string,
+    amount?: number,
+    reason?: string
+  ): Promise<Transaction> {
     try {
-      const response = await axios.post(
-        `${this.getBaseUrl()}/refunds`,
-        {
-          transaction_id: transactionId,
-          amount
-        },
-        { headers: this.getHeaders() }
-      );
+      const transaction = await this.getTransaction(transactionId);
+      const response = await this.makeRequest<Record<string, any>>('POST', `/orders/${transaction.order_id}/refunds`, {
+        refund: {
+          amount,
+          reason,
+          notify: true
+        }
+      });
 
-      return {
-        id: response.data.id,
-        amount: response.data.amount,
-        currency: response.data.currency,
-        status: this.mapShopifyStatus(response.data.status),
-        created_at: new Date(response.data.created_at),
-        updated_at: new Date(response.data.updated_at),
-        platform_id: this.config.platform_id,
-        metadata: response.data.metadata,
-        payment_method: response.data.payment_method
-      };
+      return this.updateTransaction(transactionId, {
+        status: TransactionStatus.REFUNDED,
+        metadata: {
+          ...transaction.metadata,
+          refund_amount: amount,
+          refund_reason: reason,
+          refund_date: new Date(),
+          shopify_refund_id: response.refund.id
+        }
+      });
     } catch (error) {
-      throw this.handleError(error);
+      logger.error('Error refunding transaction:', error);
+      throw this.createError('Failed to refund transaction', error);
     }
   }
 
   public async getTransaction(transactionId: string): Promise<Transaction> {
     try {
-      const response = await axios.get(
-        `${this.getBaseUrl()}/transactions/${transactionId}`,
-        { headers: this.getHeaders() }
-      );
-
+      const response = await this.makeRequest<Record<string, any>>('GET', `/orders/${transactionId}`);
       return {
-        id: response.data.id,
-        amount: response.data.amount,
-        currency: response.data.currency,
-        status: this.mapShopifyStatus(response.data.status),
-        created_at: new Date(response.data.created_at),
-        updated_at: new Date(response.data.updated_at),
+        id: transactionId,
+        user_id: response.order.customer.id,
         platform_id: this.config.platform_id,
-        metadata: response.data.metadata,
-        payment_method: response.data.payment_method
+        platform_type: 'shopify',
+        platform_settings: this.config.settings,
+        order_id: response.order.id,
+        amount: response.order.total_price,
+        currency: response.order.currency as Currency,
+        status: this.mapStatus(response.order.financial_status),
+        customer: {
+          name: response.order.customer.name,
+          email: response.order.customer.email,
+          document: response.order.customer.tax_number,
+          phone: response.order.customer.phone
+        },
+        payment_method: response.order.payment_method as PaymentMethod,
+        metadata: {
+          ...response.order,
+          shopify_order_id: response.order.id
+        },
+        created_at: new Date(response.order.created_at),
+        updated_at: new Date(response.order.updated_at)
       };
     } catch (error) {
-      throw this.handleError(error);
+      logger.error('Error getting transaction:', error);
+      throw this.createError('Failed to get transaction', error);
     }
   }
 
   public async getTransactions(startDate?: Date, endDate?: Date): Promise<Transaction[]> {
     try {
-      const params: Record<string, any> = {};
-      if (startDate) params.start_date = startDate.toISOString();
-      if (endDate) params.end_date = endDate.toISOString();
-
-      const response = await axios.get(`${this.getBaseUrl()}/transactions`, {
-        headers: this.getHeaders(),
-        params
+      const response = await this.makeRequest<Record<string, any>[]>('GET', '/orders', undefined, {
+        created_at_min: startDate?.toISOString(),
+        created_at_max: endDate?.toISOString()
       });
 
-      return response.data.transactions.map((transaction: any) => ({
-        id: transaction.id,
-        amount: transaction.amount,
-        currency: transaction.currency,
-        status: this.mapShopifyStatus(transaction.status),
-        created_at: new Date(transaction.created_at),
-        updated_at: new Date(transaction.updated_at),
+      return response.map(order => ({
+        id: order.id,
+        user_id: order.customer.id,
         platform_id: this.config.platform_id,
-        metadata: transaction.metadata,
-        payment_method: transaction.payment_method
+        platform_type: 'shopify',
+        platform_settings: this.config.settings,
+        order_id: order.id,
+        amount: order.total_price,
+        currency: order.currency as Currency,
+        status: this.mapStatus(order.financial_status),
+        customer: {
+          name: order.customer.name,
+          email: order.customer.email,
+          document: order.customer.tax_number,
+          phone: order.customer.phone
+        },
+        payment_method: order.payment_method as PaymentMethod,
+        metadata: {
+          ...order,
+          shopify_order_id: order.id
+        },
+        created_at: new Date(order.created_at),
+        updated_at: new Date(order.updated_at)
       }));
     } catch (error) {
-      throw this.handleError(error);
+      logger.error('Error getting transactions:', error);
+      throw this.createError('Failed to get transactions', error);
     }
   }
 
   public async getStatus(): Promise<PlatformStatusData> {
-    try {
-      const response = await axios.get(`${this.getBaseUrl()}/status`, {
-        headers: this.getHeaders()
-      });
+    const now = Date.now();
+    if (this.statusCache.data && now - this.statusCache.timestamp < STATUS_CACHE_TTL) {
+      return this.statusCache.data;
+    }
 
-      return {
-        is_active: response.data.is_active,
-        last_checked: new Date(),
-        errors: response.data.errors,
-        ssl_valid: response.data.ssl_valid,
-        status: this.mapShopifyStatus(response.data.status),
-        platform_version: response.data.platform_version,
-        api_version: response.data.api_version,
-        response_time: response.data.response_time,
-        uptime_percentage: response.data.uptime_percentage,
-        error_rate: response.data.error_rate
+    try {
+      const response = await this.makeRequest<Record<string, any>>('GET', '/shop');
+      
+      const status: PlatformStatusData = {
+        is_active: response.shop.status === 'active',
+        error_rate: 0,
+        status: this.mapStatus(response.shop.status),
+        last_checked: new Date()
       };
+
+      this.statusCache = {
+        data: status,
+        timestamp: now
+      };
+
+      return status;
     } catch (error) {
-      throw this.handleError(error);
+      logger.error('Error getting platform status:', error);
+      throw this.createError('Failed to get platform status', error);
     }
   }
 
   public async cancelTransaction(transactionId: string): Promise<Transaction> {
     try {
-      const response = await axios.post(
-        `${this.getBaseUrl()}/transactions/${transactionId}/cancel`,
-        {},
-        { headers: this.getHeaders() }
-      );
-
-      return {
-        id: response.data.id,
-        amount: response.data.amount,
-        currency: response.data.currency,
-        status: this.mapShopifyStatus(response.data.status),
-        created_at: new Date(response.data.created_at),
-        updated_at: new Date(response.data.updated_at),
-        platform_id: this.config.platform_id,
-        metadata: response.data.metadata,
-        payment_method: response.data.payment_method
-      };
+      const response = await this.makeRequest<Record<string, any>>('POST', `/orders/${transactionId}/cancel`);
+      
+      return this.updateTransaction(transactionId, {
+        status: TransactionStatus.CANCELLED,
+        metadata: {
+          ...response.order,
+          cancelled_at: new Date()
+        }
+      });
     } catch (error) {
-      throw this.handleError(error);
+      logger.error('Error cancelling transaction:', error);
+      throw this.createError('Failed to cancel transaction', error);
     }
   }
 
-  public async validateWebhookSignature(signature: string, payload: Record<string, any>): Promise<boolean> {
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const data = `${this.config.settings?.secretKey}${timestamp}`;
-    const expectedSignature = crypto
-      .createHmac('sha256', this.config.settings?.secretKey || '')
-      .update(data)
-      .digest('hex');
+  public async validateWebhookSignature(
+    signature: string,
+    payload: Record<string, any>
+  ): Promise<boolean> {
+    try {
+      const expectedSignature = this.generateSignature(payload);
+      return signature === expectedSignature;
+    } catch (error) {
+      logger.error('Error validating webhook signature:', error);
+      return false;
+    }
+  }
 
-    return signature === expectedSignature;
+  private generateSignature(payload?: Record<string, any>): string {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const data = payload ? JSON.stringify(payload) : '';
+    const message = `${timestamp}${data}`;
+    
+    return crypto
+      .createHmac('sha256', this.config.settings.secretKey || '')
+      .update(message)
+      .digest('hex');
   }
 } 

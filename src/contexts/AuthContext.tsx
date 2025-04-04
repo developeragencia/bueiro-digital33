@@ -59,16 +59,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const register = async (email: string, password: string) => {
     const { error } = await supabase.auth.signUp({
-      email,
-      password,
+        email,
+        password,
     });
     if (error) throw error;
   };
 
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-    setUser(null);
+      if (error) throw error;
+      setUser(null);
   };
 
   const value = {

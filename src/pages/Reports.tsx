@@ -1,3 +1,4 @@
+import React from 'react';
 import { useState } from 'react';
 import { 
   Search,
@@ -27,11 +28,15 @@ const REPORTS = [
   }
 ];
 
-export default function Reports() {
+export const Reports: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
 
   return (
     <div>
+      <h1 className="text-2xl font-bold mb-4">Relatórios</h1>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* Adicione seus relatórios aqui */}
+      </div>
       <div className="flex justify-between items-center mb-8">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
@@ -101,4 +106,4 @@ export default function Reports() {
       </div>
     </div>
   );
-}
+};
