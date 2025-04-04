@@ -21,9 +21,7 @@ export default defineConfig({
   },
   server: {
     port: 3101,
-    host: '0.0.0.0',
-    strictPort: true,
-    open: true
+    host: true
   },
   preview: {
     port: 4173,
@@ -35,9 +33,10 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          vendor: ['react', 'react-dom'],
-        },
-      },
-    },
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'ui-vendor': ['@radix-ui/react-label', '@radix-ui/react-slot', '@radix-ui/react-switch']
+        }
+      }
+    }
   },
 });
